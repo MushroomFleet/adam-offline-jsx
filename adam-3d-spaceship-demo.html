@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Adam-3D-Spaceship-Controller · Demo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet" />
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 100%; height: 100%; background: #020508; overflow: hidden; }
+  #root { width: 100vw; height: 100vh; }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0.45; }
+  }
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-6px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .fade-in { animation: fadeIn 0.5s ease forwards; }
+
+  /* Tooltip */
+  #tooltip {
+    position: fixed;
+    bottom: 100px;
+    left: 50%;
+    transform: translateX(-50%);
+    color: #00c8ff;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 12px;
+    letter-spacing: 0.2em;
+    background: rgba(0,15,30,0.85);
+    border: 1px solid rgba(0,180,255,0.25);
+    padding: 6px 18px;
+    border-radius: 2px;
+    pointer-events: none;
+    opacity: 1;
+    transition: opacity 1.5s ease;
+    z-index: 100;
+  }
+  #tooltip.hidden { opacity: 0; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<div id="tooltip">DBL-CLICK IN SPACE TO SET HEADING  ·  SCROLL TO ZOOM  ·  DRAG TO ORBIT</div>
+
+<!-- Three.js r128 (component requires r128 for CDN compat) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+// ─── Polyfill / stubs for drei/fiber unavailable in CDN demo ─────────────────
+// This demo re-implements the component logic directly in vanilla Three.js
+// while maintaining identical behaviour to the JSX component API.
+
+(function () {
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+const SPEED_LEVELS = [0, 0.25, 0.5, 0.75, 1.0];
+const MAX_SPEED    = 28;
+const ACCEL_RATE   = 4.5;
+const DECEL_RATE   = 3.0;
+const TURN_RATE    = 1.4;
+
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+// ─── Procedural skybox ────────────────────────────────────────────────────────
+function buildSkybox() {
+  const size = 512;
+  const imgs = [];
+  for (let f = 0; f < 6; f++) {
+    const c   = document.createElement('canvas');
+    c.width   = c.height = size;
+    const ctx = c.getContext('2d');
+    const grd = ctx.createRadialGradient(size/2,size/2,0,size/2,size/2,size/1.3);
+    grd.addColorStop(0, '#060a14'); grd.addColorStop(.6,'#030608'); grd.addColorStop(1,'#010205');
+    ctx.fillStyle = grd; ctx.fillRect(0,0,size,size);
+    let s = f*9301+49297;
+    const rng = () => { s=(s*9301+49297)%233280; return s/233280; };
+    for (let i=0; i<380; i++) {
+      const x=rng()*size, y=rng()*size, r=rng()*1.5+0.3, b=rng();
+      const color = b>.93?`rgba(180,220,255,${.7+rng()*.3})`:b>.85?`rgba(255,210,160,${.5+rng()*.3})`:`rgba(200,220,255,${.18+rng()*.45})`;
+      ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fillStyle=color; ctx.fill();
+    }
+    for (let n=0;n<3;n++) {
+      const gx=rng()*size,gy=rng()*size;
+      const ng=ctx.createRadialGradient(gx,gy,0,gx,gy,80+rng()*120);
+      const hue=[220,180,260,200][Math.floor(rng()*4)];
+      ng.addColorStop(0,`hsla(${hue},60%,30%,0.07)`); ng.addColorStop(1,'transparent');
+      ctx.fillStyle=ng; ctx.fillRect(0,0,size,size);
+    }
+    imgs.push(c);
+  }
+  const tex = new THREE.CubeTexture(imgs);
+  tex.needsUpdate = true;
+  return tex;
+}
+
+// ─── Diamond ship geometry ────────────────────────────────────────────────────
+function buildDiamondShip() {
+  const group = new THREE.Group();
+
+  const matHull = new THREE.MeshStandardMaterial({ color:0x1a2840, metalness:.95, roughness:.15, emissive:0x0a1525, emissiveIntensity:.3 });
+  const matSpike= new THREE.MeshStandardMaterial({ color:0x0d1e35, metalness:.9, roughness:.2 });
+  const matWing = new THREE.MeshStandardMaterial({ color:0x112030, metalness:.95, roughness:.1, emissive:0x0a2040, emissiveIntensity:.4 });
+
+  const hull = new THREE.Mesh(new THREE.OctahedronGeometry(1.5,0), matHull);
+  group.add(hull);
+
+  const fgeo = new THREE.ConeGeometry(.35,1.5,6);
+  const fore = new THREE.Mesh(fgeo, matSpike);
+  fore.position.z = 2.2; fore.rotation.x = Math.PI/2; group.add(fore);
+
+  const aft  = new THREE.Mesh(new THREE.ConeGeometry(.35,1.5,6), matSpike);
+  aft.position.z = -2.2; aft.rotation.x = -Math.PI/2; group.add(aft);
+
+  [-1,1].forEach(side => {
+    const wing = new THREE.Mesh(new THREE.BoxGeometry(1.4,.08,.9), matWing);
+    wing.position.set(side*1.8,0,0); wing.rotation.z = side*.4; group.add(wing);
+  });
+
+  const glow = new THREE.Mesh(new THREE.SphereGeometry(.22,12,8),
+    new THREE.MeshStandardMaterial({ color:0x2255cc, emissive:0x3366ff, emissiveIntensity:3, transparent:true, opacity:.85 }));
+  glow.position.z = -2.4; group.add(glow);
+
+  const eLight = new THREE.PointLight(0x4488ff, 2, 6);
+  eLight.position.z = -1.8; group.add(eLight);
+
+  return { group, glow };
+}
+
+// ─── Particle exhaust ─────────────────────────────────────────────────────────
+function buildExhaust(count=120) {
+  const positions = new Float32Array(count*3);
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(positions,3));
+  const mat = new THREE.PointsMaterial({ color:0x5599ff, size:.2, transparent:true, opacity:.7,
+    depthWrite:false, blending:THREE.AdditiveBlending });
+  const pts = new THREE.Points(geo, mat);
+
+  const pool = Array.from({length:count},()=>({
+    pos: new THREE.Vector3(), vel: new THREE.Vector3(), life:0, maxLife:0
+  }));
+
+  function update(dt, intensity) {
+    const spawnCount = Math.floor(intensity * 4);
+    let spawned = 0;
+    for (const p of pool) {
+      if (p.life<=0 && spawned<spawnCount) {
+        p.pos.set((Math.random()-.5)*.3,(Math.random()-.5)*.3,-2.0-Math.random()*.5);
+        const sp = .4+(1-intensity)*.8;
+        p.vel.set((Math.random()-.5)*sp*.5,(Math.random()-.5)*sp*.5,-(2+Math.random()*3)*intensity);
+        p.maxLife = p.life = .4+Math.random()*.5; spawned++;
+      }
+    }
+    const pos = geo.attributes.position.array;
+    let i = 0;
+    for (const p of pool) {
+      if (p.life>0) {
+        p.life -= dt;
+        p.pos.addScaledVector(p.vel,dt);
+        pos[i*3]=p.pos.x; pos[i*3+1]=p.pos.y; pos[i*3+2]=p.pos.z;
+      } else {
+        pos[i*3]=0; pos[i*3+1]=0; pos[i*3+2]=-999;
+      }
+      i++;
+    }
+    geo.attributes.position.needsUpdate = true;
+  }
+  return { mesh: pts, update };
+}
+
+// ─── Target reticle ───────────────────────────────────────────────────────────
+function buildReticle() {
+  const group = new THREE.Group();
+  const mat   = new THREE.MeshBasicMaterial({ color:0x00ccff, transparent:true, opacity:.8,
+    depthTest:false, blending:THREE.AdditiveBlending, side:THREE.DoubleSide });
+  [0,Math.PI/2,Math.PI,Math.PI*1.5].forEach(r=>{
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(.35,.06), mat);
+    m.rotation.z = r; m.position.set(.6,.6,0);
+    group.add(m);
+  });
+  return group;
+}
+
+// ─── Scene setup ─────────────────────────────────────────────────────────────
+const canvas  = document.createElement('canvas');
+canvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;';
+document.getElementById('root').appendChild(canvas);
+
+const renderer = new THREE.WebGLRenderer({ canvas, antialias:true });
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.1;
+
+const scene  = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 2000);
+camera.position.set(0, 6, 20);
+
+scene.background = buildSkybox();
+
+// Lights
+scene.add(new THREE.AmbientLight(0x1a2040, .1));
+const sun = new THREE.DirectionalLight(0xffd8a0, 1.4);
+sun.position.set(80,40,-60); scene.add(sun);
+const fill = new THREE.PointLight(0x2244aa,.3); fill.position.set(-40,20,40); scene.add(fill);
+
+// Stars background mesh
+const starGeo  = new THREE.BufferGeometry();
+const starPos  = new Float32Array(8000*3);
+for (let i=0;i<8000*3;i++) starPos[i]=(Math.random()-.5)*1600;
+starGeo.setAttribute('position',new THREE.BufferAttribute(starPos,3));
+scene.add(new THREE.Points(starGeo, new THREE.PointsMaterial({color:0x99bbdd,size:.7,transparent:true,opacity:.5,sizeAttenuation:true})));
+
+// Ship
+const { group: shipGroup, glow: engineGlow } = buildDiamondShip();
+scene.add(shipGroup);
+
+const exhaust = buildExhaust();
+shipGroup.add(exhaust.mesh);
+
+// Reticle
+const reticle = buildReticle();
+reticle.visible = false;
+scene.add(reticle);
+
+// ─── State ────────────────────────────────────────────────────────────────────
+const shipPos      = new THREE.Vector3(0,0,0);
+const shipFwd      = new THREE.Vector3(0,0,1);
+const targetFwd    = new THREE.Vector3(0,0,1);
+let   currentSpeed = 0;
+let   throttleIndex= 0;
+let   targetPt     = null;
+
+// ─── Orbit camera (manual implementation) ────────────────────────────────────
+const orbitState = { theta: -Math.PI*.1, phi: Math.PI*.3, radius: 20, target: new THREE.Vector3() };
+
+function applyOrbit() {
+  const { theta, phi, radius, target } = orbitState;
+  const x = target.x + radius * Math.sin(phi) * Math.sin(theta);
+  const y = target.y + radius * Math.cos(phi);
+  const z = target.z + radius * Math.sin(phi) * Math.cos(theta);
+  camera.position.set(x,y,z);
+  camera.lookAt(target);
+}
+applyOrbit();
+
+let drag = false, lastX=0, lastY=0;
+canvas.addEventListener('mousedown', e=>{ drag=true; lastX=e.clientX; lastY=e.clientY; });
+window.addEventListener('mouseup', ()=>{ drag=false; });
+window.addEventListener('mousemove', e=>{
+  if (!drag) return;
+  const dx = e.clientX - lastX, dy = e.clientY - lastY;
+  orbitState.theta -= dx * .005;
+  orbitState.phi    = clamp(orbitState.phi + dy*.005, .05, Math.PI-.05);
+  lastX=e.clientX; lastY=e.clientY;
+});
+canvas.addEventListener('wheel', e=>{
+  orbitState.radius = clamp(orbitState.radius * (1+e.deltaY*.001), 4, 80);
+}, { passive:true });
+
+// Double-click heading
+const raycaster = new THREE.Raycaster();
+canvas.addEventListener('dblclick', e=>{
+  const rect = canvas.getBoundingClientRect();
+  const x    = ((e.clientX-rect.left)/rect.width)*2-1;
+  const y    = -((e.clientY-rect.top)/rect.height)*2+1;
+  raycaster.setFromCamera({x,y}, camera);
+  const dir = raycaster.ray.direction.clone().normalize();
+  const pt  = shipPos.clone().addScaledVector(dir, 200);
+  targetPt  = pt;
+  targetFwd.copy(pt.clone().sub(shipPos).normalize());
+  reticle.position.copy(pt);
+  reticle.visible = true;
+});
+
+// ─── HUD creation ─────────────────────────────────────────────────────────────
+const LABELS = ['STOP','¼','½','¾','FULL'];
+const C = { cyan:'#00c8ff', cyanDim:'#0066aa', amber:'#ffaa00', dim:'#224466',
+            text:'#88ccee', panel:'rgba(0,20,40,0.72)', border:'rgba(0,180,255,0.18)' };
+const MONO = '"Share Tech Mono","Courier New",monospace';
+
+function el(tag, css, html='') {
+  const e = document.createElement(tag);
+  e.style.cssText = css;
+  if (html) e.innerHTML = html;
+  return e;
+}
+
+const hud = el('div','position:absolute;inset:0;pointer-events:none;font-family:'+MONO+';');
+document.getElementById('root').appendChild(hud);
+
+// Top bar
+const topBar = el('div',`position:absolute;top:0;left:0;right:0;height:38px;display:flex;align-items:center;justify-content:space-between;padding:0 20px;background:rgba(0,10,22,0.85);border-bottom:1px solid ${C.border};pointer-events:auto;`);
+topBar.innerHTML = `
+  <span style="color:${C.cyan};font-size:12px;letter-spacing:.2em;font-weight:700;">◈ DEADSPACE POCKET</span>
+  <span style="color:${C.dim};font-size:10px;letter-spacing:.15em;">DBL-CLICK TO SET HEADING · SCROLL TO ZOOM · DRAG TO ORBIT</span>
+  <label style="color:${C.amber};font-size:11px;letter-spacing:.15em;cursor:pointer;border:1px solid rgba(255,170,0,.3);padding:3px 10px;border-radius:2px;background:rgba(80,40,0,.3);">
+    ⬆ LOAD GLB<input type="file" accept=".glb" style="display:none;" id="glbInput"/>
+  </label>`;
+hud.appendChild(topBar);
+
+// Speed panel
+const speedPanel = el('div',`position:absolute;left:20px;top:58px;bottom:80px;width:64px;display:flex;flex-direction:column;align-items:center;background:${C.panel};border:1px solid ${C.border};border-radius:3px;padding:10px 0;`);
+speedPanel.innerHTML=`<div style="color:${C.dim};font-size:9px;letter-spacing:.2em;margin-bottom:8px;">VELOCITY</div>`;
+const speedBarWrap = el('div','flex:1;width:16px;position:relative;background:rgba(0,40,80,.5);border:1px solid rgba(0,180,255,.18);border-radius:2px;margin:0 0 8px;');
+const speedFill    = el('div','position:absolute;bottom:0;left:0;right:0;height:0%;background:linear-gradient(#33aaff,#0044cc);border-radius:2px;transition:height .15s;box-shadow:0 0 8px #0099ff88;');
+speedBarWrap.appendChild(speedFill);
+[0,25,50,75,100].forEach(m=>{
+  const mk=el('div',`position:absolute;right:-24px;bottom:${m}%;`);
+  mk.innerHTML=`<span style="color:${C.dim};font-size:8px;">${m}</span>`;
+  speedBarWrap.appendChild(mk);
+});
+speedPanel.appendChild(speedBarWrap);
+const speedReadout = el('div',`color:${C.cyan};font-size:11px;letter-spacing:.05em;`,'0.0 <span style="color:'+C.dim+';font-size:9px;">u/s</span>');
+speedPanel.appendChild(speedReadout);
+hud.appendChild(speedPanel);
+
+// Throttle panel
+const throttlePanel = el('div',`position:absolute;bottom:20px;left:50%;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:8px;background:${C.panel};border:1px solid ${C.border};border-radius:3px;padding:10px 16px;pointer-events:auto;`);
+throttlePanel.innerHTML = `<div style="color:${C.dim};font-size:9px;letter-spacing:.2em;">THROTTLE</div>`;
+const btnRow = el('div','display:flex;gap:4px;');
+const tBtns  = [];
+LABELS.forEach((lbl,i)=>{
+  const b = el('button',`background:rgba(0,30,60,.8);border:1px solid ${C.cyanDim};color:${C.text};font-family:${MONO};font-size:11px;letter-spacing:.1em;padding:5px 12px;cursor:pointer;border-radius:2px;transition:all .15s;`,lbl);
+  b.onclick=()=>setThrottle(i);
+  btnRow.appendChild(b); tBtns.push(b);
+});
+throttlePanel.appendChild(btnRow);
+const throttleLabel = el('div',`color:${C.cyan};font-size:10px;letter-spacing:.2em;`,'STOP');
+throttlePanel.appendChild(throttleLabel);
+hud.appendChild(throttlePanel);
+
+// Telemetry panel
+const telPanel = el('div',`position:absolute;right:20px;top:58px;width:170px;background:${C.panel};border:1px solid ${C.border};border-radius:3px;padding:10px 14px;`);
+telPanel.innerHTML=`<div style="color:${C.dim};font-size:9px;letter-spacing:.2em;margin-bottom:6px;">TELEMETRY</div>`;
+const telRows = {};
+['SPD','HDG X','HDG Y','HDG Z','DIV','POS X','POS Y','POS Z'].forEach(k=>{
+  if (k==='DIV') {
+    telPanel.appendChild(el('div',`border-top:1px solid ${C.border};margin:6px 0;`));
+    return;
+  }
+  const row = el('div','display:flex;justify-content:space-between;margin-bottom:4px;');
+  row.innerHTML=`<span style="color:${C.dim};font-size:10px;letter-spacing:.15em;">${k}</span><span style="color:${C.cyan};font-size:10px;" id="tel_${k.replace(' ','_')}">—</span>`;
+  telPanel.appendChild(row);
+  telRows[k]=row.querySelector(`#tel_${k.replace(' ','_')}`);
+});
+hud.appendChild(telPanel);
+
+// Inertia label
+const inertiaEl = el('div',`position:absolute;top:58px;left:50%;transform:translateX(-50%);color:${C.amber};font-size:11px;letter-spacing:.25em;background:rgba(0,10,20,.7);border:1px solid rgba(255,170,0,.3);padding:4px 14px;border-radius:2px;animation:pulse 1.2s ease-in-out infinite;pointer-events:none;display:none;`,'');
+hud.appendChild(inertiaEl);
+
+// Scanlines + vignette
+hud.appendChild(el('div','position:absolute;inset:0;background-image:repeating-linear-gradient(0deg,rgba(0,0,0,.04) 0px,rgba(0,0,0,.04) 1px,transparent 1px,transparent 3px);pointer-events:none;z-index:10;'));
+hud.appendChild(el('div','position:absolute;inset:0;background:radial-gradient(ellipse at center,transparent 50%,rgba(0,0,10,.65) 100%);pointer-events:none;z-index:9;'));
+
+// ─── Throttle logic ───────────────────────────────────────────────────────────
+function setThrottle(i) {
+  throttleIndex = i;
+  tBtns.forEach((b,j)=>{
+    if (j===i) {
+      b.style.background='rgba(0,100,200,.4)';
+      b.style.border=`1px solid ${C.cyan}`;
+      b.style.color=C.cyan;
+      b.style.boxShadow=`0 0 10px rgba(0,200,255,.4)`;
+    } else {
+      b.style.background='rgba(0,30,60,.8)';
+      b.style.border=`1px solid ${C.cyanDim}`;
+      b.style.color=C.text;
+      b.style.boxShadow='none';
+    }
+  });
+  throttleLabel.textContent = ['STOP','¼ SPEED','½ SPEED','¾ SPEED','FULL'][i];
+}
+setThrottle(0);
+
+// ─── GLB loader ───────────────────────────────────────────────────────────────
+document.getElementById('glbInput').addEventListener('change', async e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  // Dynamically import GLTFLoader from three examples
+  const script = document.createElement('script');
+  script.src = 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js';
+  // GLTFLoader is not bundled in r128 CDN min; we use a minimal inline loader stub
+  // Users integrating via npm will have full GLTFLoader available.
+  alert('GLB loading requires the npm build with GLTFLoader. The CDN demo uses the default diamond ship. Integrate Adam-3D-spaceship-controller.jsx into your React project for full GLB support.');
+});
+
+// ─── Resize ───────────────────────────────────────────────────────────────────
+function resize() {
+  const W = window.innerWidth, H = window.innerHeight;
+  renderer.setSize(W, H);
+  camera.aspect = W/H;
+  camera.updateProjectionMatrix();
+}
+window.addEventListener('resize', resize);
+resize();
+
+// ─── Animation loop ───────────────────────────────────────────────────────────
+let last = performance.now();
+function loop() {
+  requestAnimationFrame(loop);
+  const now = performance.now();
+  const dt  = Math.min((now - last) / 1000, 0.05);
+  last      = now;
+
+  const targetSpeed = MAX_SPEED * SPEED_LEVELS[throttleIndex];
+
+  // Newtonian speed
+  if (currentSpeed < targetSpeed)      currentSpeed = Math.min(targetSpeed, currentSpeed + ACCEL_RATE*dt);
+  else if (currentSpeed > targetSpeed) currentSpeed = Math.max(targetSpeed, currentSpeed - DECEL_RATE*dt);
+
+  // Turn toward target heading
+  if (currentSpeed > 0.01) {
+    const q = new THREE.Quaternion().setFromUnitVectors(shipFwd, targetFwd);
+    const fAngle = 2*Math.acos(clamp(q.w,-1,1));
+    if (fAngle > 0.001) {
+      const step = Math.min(1, (TURN_RATE*dt)/Math.max(0.001, fAngle));
+      shipFwd.lerp(targetFwd, step).normalize();
+    }
+  }
+
+  // Move ship
+  shipPos.addScaledVector(shipFwd, currentSpeed*dt);
+
+  // Update ship group
+  shipGroup.position.copy(shipPos);
+  if (currentSpeed > 0.05) {
+    const lookAt = new THREE.Matrix4().lookAt(new THREE.Vector3(), shipFwd, new THREE.Vector3(0,1,0));
+    const qRot   = new THREE.Quaternion().setFromRotationMatrix(lookAt);
+    shipGroup.quaternion.slerp(qRot, 0.06);
+  }
+
+  // Exhaust
+  const intensity = currentSpeed / MAX_SPEED;
+  exhaust.update(dt, intensity);
+
+  // Engine glow pulse
+  engineGlow.material.emissiveIntensity = 2.5 + intensity * 1.5 + Math.sin(now/200)*.3;
+
+  // Reticle
+  if (targetPt) {
+    reticle.rotation.z += dt * 0.8;
+    if (shipPos.distanceTo(targetPt) < 5) { reticle.visible=false; targetPt=null; }
+  }
+
+  // Camera orbit target → ship
+  orbitState.target.lerp(shipPos, 0.12);
+  applyOrbit();
+
+  // HUD updates
+  const pct = (currentSpeed / MAX_SPEED) * 100;
+  speedFill.style.height = pct + '%';
+  speedFill.style.background = pct>85?'linear-gradient(#ff4433,#ff8833)':pct>50?'linear-gradient(#00ccff,#0066ff)':'linear-gradient(#33aaff,#0044cc)';
+  speedReadout.innerHTML = `${currentSpeed.toFixed(1)} <span style="color:${C.dim};font-size:9px;">u/s</span>`;
+
+  if (telRows['SPD'])   telRows['SPD'].textContent   = `${currentSpeed.toFixed(2)} u/s`;
+  if (telRows['HDG X']) telRows['HDG X'].textContent = shipFwd.x.toFixed(3);
+  if (telRows['HDG Y']) telRows['HDG Y'].textContent = shipFwd.y.toFixed(3);
+  if (telRows['HDG Z']) telRows['HDG Z'].textContent = shipFwd.z.toFixed(3);
+  if (telRows['POS X']) telRows['POS X'].textContent = shipPos.x.toFixed(1);
+  if (telRows['POS Y']) telRows['POS Y'].textContent = shipPos.y.toFixed(1);
+  if (telRows['POS Z']) telRows['POS Z'].textContent = shipPos.z.toFixed(1);
+
+  const delta = Math.abs(currentSpeed - targetSpeed);
+  inertiaEl.style.display = delta > 0.5 ? 'block' : 'none';
+  inertiaEl.textContent   = currentSpeed < targetSpeed ? '▲ ACCELERATING' : '▼ DECELERATING';
+
+  renderer.render(scene, camera);
+}
+loop();
+
+// Tooltip dismiss
+setTimeout(()=>{ document.getElementById('tooltip').classList.add('hidden'); }, 5000);
+
+})();
+</script>
+</body>
+</html>
