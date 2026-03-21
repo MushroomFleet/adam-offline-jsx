@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Station Interior — Hangar Demo</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { width: 100%; height: 100%; background: #000510; overflow: hidden; }
+    #root { width: 100%; height: 100vh; }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateX(-20px); }
+      to   { opacity: 1; transform: translateX(0); }
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.4; }
+    }
+    @keyframes scanIn {
+      from { clip-path: inset(0 100% 0 0); }
+      to   { clip-path: inset(0 0% 0 0); }
+    }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+
+<!-- Import maps for module resolution -->
+<script type="importmap">
+{
+  "imports": {
+    "three":              "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/":      "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+    "react":              "https://esm.sh/react@18.2.0",
+    "react-dom/client":   "https://esm.sh/react-dom@18.2.0/client",
+    "@react-three/fiber": "https://esm.sh/@react-three/fiber@8.15.12?deps=react@18.2.0,three@0.160.0",
+    "@react-three/drei":  "https://esm.sh/@react-three/drei@9.92.7?deps=react@18.2.0,three@0.160.0,@react-three/fiber@8.15.12"
+  }
+}
+</script>
+
+<script type="module">
+import * as React from 'react';
+const { useState, useRef, useEffect, useMemo, useCallback } = React;
+import { createRoot } from 'react-dom/client';
+import * as THREE from 'three';
+import { Canvas, useFrame, useThree } from '@react-three/fiber';
+import { Stars } from '@react-three/drei';
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PALETTE
+// ═══════════════════════════════════════════════════════════════════════════════
+const PAL = {
+  hull:      new THREE.Color('#1a2540'),
+  hullLight: new THREE.Color('#2e4070'),
+  glow:      new THREE.Color('#00d4ff'),
+  glowWarm:  new THREE.Color('#ff8c00'),
+  padBase:   new THREE.Color('#0d1a30'),
+  accent:    new THREE.Color('#00ffcc'),
+  npcA:      new THREE.Color('#6633aa'),
+  npcB:      new THREE.Color('#aa3322'),
+  wall:      new THREE.Color('#111827'),
+  wallLight: new THREE.Color('#1f2d45'),
+  floor:     new THREE.Color('#0a1020'),
+  floorGrid: new THREE.Color('#172030'),
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// VERTEX COLOUR HELPER
+// ═══════════════════════════════════════════════════════════════════════════════
+function applyVC(geo, fn) {
+  const pos = geo.attributes.position;
+  const arr = new Float32Array(pos.count * 3);
+  for (let i = 0; i < pos.count; i++) {
+    const c = fn(pos.getY(i), i);
+    arr[i*3] = c.r; arr[i*3+1] = c.g; arr[i*3+2] = c.b;
+  }
+  geo.setAttribute('color', new THREE.BufferAttribute(arr, 3));
+  return geo;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// HANGAR SHELL
+// ═══════════════════════════════════════════════════════════════════════════════
+function HangarGeometry() {
+  const wallMat  = useMemo(() => new THREE.MeshLambertMaterial({ vertexColors:true, side:THREE.BackSide }), []);
+  const floorMat = useMemo(() => new THREE.MeshLambertMaterial({ vertexColors:true }), []);
+  const trimMat  = useMemo(() => new THREE.MeshLambertMaterial({ color:PAL.glow, emissive:PAL.glow, emissiveIntensity:0.5 }), []);
+  const voidMat  = useMemo(() => new THREE.MeshLambertMaterial({ color:new THREE.Color('#000510'), transparent:true, opacity:0.7, side:THREE.DoubleSide }), []);
+
+  const wallGeo = useMemo(() => {
+    const g = new THREE.BoxGeometry(40, 20, 60, 4, 4, 6);
+    return applyVC(g, y => new THREE.Color().lerpColors(PAL.wall, PAL.wallLight, ((y+10)/20)*0.5));
+  }, []);
+
+  const floorGeo = useMemo(() => {
+    const g = new THREE.PlaneGeometry(40, 60, 8, 12);
+    return applyVC(g, (_, i) => (Math.floor(i/9)%2===0 ? PAL.floor : PAL.floorGrid));
+  }, []);
+
+  return React.createElement(React.Fragment, null,
+    // Main shell
+    React.createElement('mesh', { geometry:wallGeo, material:wallMat, receiveShadow:true }),
+    // Floor
+    React.createElement('mesh', { geometry:floorGeo, material:floorMat, rotation:[-Math.PI/2,0,0], position:[0,-10,0], receiveShadow:true }),
+    // Gateway vertical trim pillars
+    React.createElement('mesh', { material:trimMat, position:[-19.8,0,-30] },
+      React.createElement('boxGeometry', { args:[0.3,20,0.3] })),
+    React.createElement('mesh', { material:trimMat, position:[19.8,0,-30] },
+      React.createElement('boxGeometry', { args:[0.3,20,0.3] })),
+    // Gateway horizontal trim
+    React.createElement('mesh', { material:trimMat, position:[0,9.8,-30] },
+      React.createElement('boxGeometry', { args:[40,0.3,0.3] })),
+    // Ceiling light strips
+    ...([-10,0,10].map(z =>
+      React.createElement('mesh', { key:z, material:trimMat, position:[0,9.6,z] },
+        React.createElement('boxGeometry', { args:[38,0.15,0.15] })))),
+    // Rear wall ribs
+    ...([-15,-5,5,15].map(x =>
+      React.createElement('mesh', { key:x, material:trimMat, position:[x,0,29.8] },
+        React.createElement('boxGeometry', { args:[0.2,20,0.2] })))),
+    // Deep void at gateway
+    React.createElement('mesh', { material:voidMat, position:[0,0,-30.1] },
+      React.createElement('planeGeometry', { args:[40,20] })),
+    // Starfield beyond
+    React.createElement('group', { position:[0,0,-35] },
+      React.createElement(Stars, { radius:60, depth:25, count:1000, factor:2, saturation:0, speed:0.2 }))
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DOCKING PAD
+// ═══════════════════════════════════════════════════════════════════════════════
+function DockingPad({ docked }) {
+  const lights = useRef([]);
+  const t = useRef(0);
+
+  useFrame((_,dt) => {
+    t.current += dt;
+    lights.current.forEach((m,i) => {
+      if (!m) return;
+      const p = 0.5 + 0.5*Math.sin(t.current*2.2 + i*1.05);
+      m.emissiveIntensity = docked ? 0.3+p*1.0 : 0.08+p*0.12;
+      m.color.set(docked ? PAL.accent : PAL.glow);
+      m.emissive.set(docked ? PAL.accent : PAL.glow);
+    });
+  });
+
+  const hexPts = useMemo(() => Array.from({length:6},(_,i)=>{
+    const a=(i/6)*Math.PI*2; return [Math.cos(a)*6.5, Math.sin(a)*6.5];
+  }),[]);
+
+  return React.createElement('group', { position:[0,-9.9,8] },
+    // Base slab
+    React.createElement('mesh', { receiveShadow:true, rotation:[-Math.PI/2,0,0] },
+      React.createElement('cylinderGeometry', { args:[6.5,7,0.3,6] }),
+      React.createElement('meshLambertMaterial', { color:PAL.padBase })),
+    // Light segments
+    ...hexPts.map(([x,z],i) =>
+      React.createElement('mesh', {
+        key:i,
+        position:[x,0.18,z],
+        ref:el=>{ if(el) lights.current[i]=el.material }
+      },
+        React.createElement('boxGeometry', { args:[0.5,0.14,2.8] }),
+        React.createElement('meshLambertMaterial', { color:PAL.glow, emissive:PAL.glow, emissiveIntensity:0.2 }))),
+    // Cross markers
+    React.createElement('mesh', { rotation:[-Math.PI/2,0,0], position:[0,0.22,0] },
+      React.createElement('planeGeometry', { args:[0.25,12] }),
+      React.createElement('meshLambertMaterial', { color:PAL.accent, emissive:PAL.accent, emissiveIntensity:0.8 })),
+    React.createElement('mesh', { rotation:[-Math.PI/2,0,0], position:[0,0.22,0] },
+      React.createElement('planeGeometry', { args:[12,0.25] }),
+      React.createElement('meshLambertMaterial', { color:PAL.accent, emissive:PAL.accent, emissiveIntensity:0.8 }))
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PLAYER SHIP
+// ═══════════════════════════════════════════════════════════════════════════════
+function PlayerShip({ docked }) {
+  const ref = useRef();
+  const t = useRef(0);
+
+  useFrame((_,dt) => {
+    if (!ref.current) return;
+    t.current += dt*0.4;
+    if (!docked) {
+      ref.current.position.y = -7 + Math.sin(t.current)*0.22;
+      ref.current.rotation.y = Math.sin(t.current*0.3)*0.04;
+    } else {
+      ref.current.position.y = THREE.MathUtils.lerp(ref.current.position.y, -9.3, dt*2.5);
+      ref.current.rotation.y = THREE.MathUtils.lerp(ref.current.rotation.y, 0, dt*2);
+    }
+  });
+
+  return React.createElement('group', { ref, position:[0,-7,8], rotation:[0,Math.PI,0] },
+    // Fuselage  — GLB_SLOT: 0
+    React.createElement('mesh', { castShadow:true },
+      React.createElement('boxGeometry', { args:[1.3,0.52,5.2] }),
+      React.createElement('meshLambertMaterial', { color:PAL.hull })),
+    // Wings
+    React.createElement('mesh', { position:[0,0,0.5], castShadow:true },
+      React.createElement('boxGeometry', { args:[5.5,0.13,2.6] }),
+      React.createElement('meshLambertMaterial', { color:PAL.hullLight })),
+    // Wing accent stripe
+    React.createElement('mesh', { position:[0,0.1,0.5] },
+      React.createElement('boxGeometry', { args:[3.5,0.07,0.28] }),
+      React.createElement('meshLambertMaterial', { color:PAL.accent, emissive:PAL.accent, emissiveIntensity:0.9 })),
+    // Cockpit
+    React.createElement('mesh', { position:[0,0.42,-1.5] },
+      React.createElement('boxGeometry', { args:[0.72,0.52,1.3] }),
+      React.createElement('meshLambertMaterial', { color:PAL.glow, emissive:PAL.glow, emissiveIntensity:0.5, transparent:true, opacity:0.85 })),
+    // Nose
+    React.createElement('mesh', { position:[0,0,-2.9] },
+      React.createElement('coneGeometry', { args:[0.45,1.2,5] }),
+      React.createElement('meshLambertMaterial', { color:PAL.hullLight })),
+    // Engine L
+    React.createElement('group', { position:[-0.75,-0.1,2.35] },
+      React.createElement('mesh', { castShadow:true },
+        React.createElement('cylinderGeometry', { args:[0.19,0.25,1.3,6] }),
+        React.createElement('meshLambertMaterial', { color:PAL.hull })),
+      React.createElement('mesh', { position:[0,0.7,0] },
+        React.createElement('cylinderGeometry', { args:[0.13,0.13,0.09,6] }),
+        React.createElement('meshLambertMaterial', { color:PAL.glowWarm, emissive:PAL.glowWarm, emissiveIntensity:1.4 })),
+      React.createElement('pointLight', { color:'#ff8c00', intensity:1.2, distance:4, position:[0,0.9,0] })),
+    // Engine R
+    React.createElement('group', { position:[0.75,-0.1,2.35] },
+      React.createElement('mesh', { castShadow:true },
+        React.createElement('cylinderGeometry', { args:[0.19,0.25,1.3,6] }),
+        React.createElement('meshLambertMaterial', { color:PAL.hull })),
+      React.createElement('mesh', { position:[0,0.7,0] },
+        React.createElement('cylinderGeometry', { args:[0.13,0.13,0.09,6] }),
+        React.createElement('meshLambertMaterial', { color:PAL.glowWarm, emissive:PAL.glowWarm, emissiveIntensity:1.4 })),
+      React.createElement('pointLight', { color:'#ff8c00', intensity:1.2, distance:4, position:[0,0.9,0] }))
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// NPC SHUTTLE
+// ═══════════════════════════════════════════════════════════════════════════════
+function NPCShuttle({ color, path, speed, offset=0 }) {
+  const ref = useRef();
+  const t = useRef(offset);
+
+  useFrame((_,dt) => {
+    t.current = (t.current + dt*speed) % 1;
+    const pt = path.getPoint(t.current);
+    const ah = path.getPoint((t.current+0.01)%1);
+    if (ref.current) { ref.current.position.copy(pt); ref.current.lookAt(ah); }
+  });
+
+  return React.createElement('group', { ref },
+    React.createElement('mesh', { castShadow:true },  // GLB_SLOT: 1
+      React.createElement('boxGeometry', { args:[0.9,0.46,2.4] }),
+      React.createElement('meshLambertMaterial', { color })),
+    React.createElement('mesh', { position:[0,0.28,-0.55] },
+      React.createElement('boxGeometry', { args:[0.52,0.32,0.55] }),
+      React.createElement('meshLambertMaterial', { color:PAL.glow, emissive:PAL.glow, emissiveIntensity:0.35, transparent:true, opacity:0.8 })),
+    React.createElement('mesh', { position:[0,0,1.25] },
+      React.createElement('cylinderGeometry', { args:[0.1,0.1,0.07,5] }),
+      React.createElement('meshLambertMaterial', { color:PAL.glowWarm, emissive:PAL.glowWarm, emissiveIntensity:1.1 })),
+    React.createElement('pointLight', { color:'#ff8c00', intensity:0.6, distance:5, position:[0,0,1.5] })
+  );
+}
+
+function NPCTraffic() {
+  const paths = useMemo(() => {
+    const p1 = new THREE.CatmullRomCurve3([
+      new THREE.Vector3(-15,-4,-20), new THREE.Vector3(15,-3,-20),
+      new THREE.Vector3(18,-5,0),    new THREE.Vector3(14,-4,20),
+      new THREE.Vector3(-14,-6,20),  new THREE.Vector3(-18,-4,0),
+    ], true);
+    const p2 = new THREE.CatmullRomCurve3([
+      new THREE.Vector3(10,2,-24),  new THREE.Vector3(-12,1,-14),
+      new THREE.Vector3(-16,3,5),   new THREE.Vector3(-8,2,22),
+      new THREE.Vector3(12,1,22),   new THREE.Vector3(16,3,5),
+    ], true);
+    return [p1,p2];
+  },[]);
+
+  return React.createElement(React.Fragment, null,
+    React.createElement(NPCShuttle, { color:PAL.npcA, path:paths[0], speed:0.055, offset:0 }),
+    React.createElement(NPCShuttle, { color:PAL.npcB, path:paths[0], speed:0.055, offset:0.5 }),
+    React.createElement(NPCShuttle, { color:PAL.npcA, path:paths[1], speed:0.038, offset:0.3 })
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DUST PARTICLES
+// ═══════════════════════════════════════════════════════════════════════════════
+function DustParticles() {
+  const ref = useRef();
+  const N = 350;
+
+  const [pos, vel] = useMemo(() => {
+    const p = new Float32Array(N*3), v = new Float32Array(N*3);
+    for (let i=0;i<N;i++) {
+      p[i*3]   = (Math.random()-.5)*38;
+      p[i*3+1] = Math.random()*18-9;
+      p[i*3+2] = (Math.random()-.5)*58;
+      v[i*3]   = (Math.random()-.5)*.009;
+      v[i*3+1] = (Math.random()-.5)*.004;
+      v[i*3+2] = (Math.random()-.5)*.009;
+    }
+    return [p,v];
+  },[]);
+
+  useFrame(() => {
+    if (!ref.current) return;
+    const p = ref.current.geometry.attributes.position.array;
+    for (let i=0;i<N;i++) {
+      p[i*3]   += vel[i*3];   if (Math.abs(p[i*3])>19)   p[i*3]   *=-1;
+      p[i*3+1] += vel[i*3+1]; if (Math.abs(p[i*3+1])>9)  p[i*3+1] *=-1;
+      p[i*3+2] += vel[i*3+2]; if (Math.abs(p[i*3+2])>29) p[i*3+2] *=-1;
+    }
+    ref.current.geometry.attributes.position.needsUpdate = true;
+  });
+
+  return React.createElement('points', { ref },
+    React.createElement('bufferGeometry', null,
+      React.createElement('bufferAttribute', { attach:'attributes-position', args:[pos,3] })),
+    React.createElement('pointsMaterial', { color:PAL.glow, size:0.06, transparent:true, opacity:0.35, sizeAttenuation:true })
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// LIGHTING
+// ═══════════════════════════════════════════════════════════════════════════════
+function HangarLighting() {
+  return React.createElement(React.Fragment, null,
+    React.createElement('ambientLight', { color:'#091420', intensity:0.9 }),
+    React.createElement('directionalLight', {
+      color:'#c8e8ff', intensity:1.3, position:[0,15,5],
+      castShadow:true, 'shadow-mapSize':[1024,1024]
+    }),
+    React.createElement('directionalLight', { color:PAL.glow, intensity:0.55, position:[0,2,-30] }),
+    React.createElement('directionalLight', { color:'#ff9940', intensity:0.18, position:[0,0,30] }),
+    ...([-10,0,10].map(z =>
+      React.createElement('pointLight', { key:z, color:PAL.glow, intensity:0.35, distance:14, position:[0,9,z] })))
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CAMERA RIG
+// ═══════════════════════════════════════════════════════════════════════════════
+function CameraRig({ docked }) {
+  const { camera } = useThree();
+  const t = useRef(0);
+  const tPos  = useRef(new THREE.Vector3(0,2,22));
+  const tLook = useRef(new THREE.Vector3(0,-2,0));
+  const cLook = useRef(new THREE.Vector3(0,-2,0));
+
+  useEffect(() => { camera.position.set(0,2,22); camera.lookAt(0,-2,0); }, []);
+
+  useFrame((_,dt) => {
+    t.current += dt;
+    if (docked) {
+      tPos.current.set(Math.sin(t.current*.15)*8, -1+Math.sin(t.current*.2)*1.5, 14+Math.sin(t.current*.1)*3);
+      tLook.current.set(0,-4,5);
+    } else {
+      const r=22, a=t.current*.1;
+      tPos.current.set(Math.sin(a)*r, 3+Math.sin(t.current*.07)*2, Math.cos(a)*r);
+      tLook.current.set(0,-2,5);
+    }
+    camera.position.lerp(tPos.current, dt*1.1);
+    cLook.current.lerp(tLook.current, dt*1.4);
+    camera.lookAt(cLook.current);
+  });
+
+  return null;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SERVICES MENU
+// ═══════════════════════════════════════════════════════════════════════════════
+const SERVICES = [
+  { id:'market',    icon:'◈', label:'Market',       sub:'Buy & sell goods'      },
+  { id:'fitting',   icon:'⊕', label:'Fitting',      sub:'Outfit your ship'      },
+  { id:'repair',    icon:'⟳', label:'Repair',       sub:'Hull & module repair'  },
+  { id:'agents',    icon:'✦', label:'Agent Finder', sub:'Missions & contracts'  },
+  { id:'insurance', icon:'⬡', label:'Insurance',    sub:'Protect your assets'   },
+  { id:'clone',     icon:'⧖', label:'Clone Bay',    sub:'Medical services'      },
+];
+
+function ServicesMenu({ visible, onSelect, onUndock }) {
+  const [sel, setSel] = useState(null);
+  const [hov, setHov] = useState(null);
+  if (!visible) return null;
+
+  return React.createElement('div', { style:S.menuOverlay },
+    React.createElement('div', { style:S.menuPanel },
+      // Header
+      React.createElement('div', { style:S.menuHeader },
+        React.createElement('div', { style:S.menuHeaderTop },
+          React.createElement('span', { style:S.menuTitle }, 'STATION SERVICES'),
+          React.createElement('span', { style:S.menuSub },   'Astra Prime  •  Bay 7  •  DOCKED')),
+        React.createElement('div', { style:S.statusRow },
+          React.createElement('span', { style:S.statusDot }),
+          React.createElement('span', {}, 'All systems nominal'))),
+      // Service list
+      React.createElement('div', { style:S.svcList },
+        SERVICES.map(s =>
+          React.createElement('button', {
+            key:s.id,
+            style:{ ...S.svcBtn, ...(sel===s.id?S.svcBtnActive:hov===s.id?S.svcBtnHover:{}) },
+            onMouseEnter:()=>setHov(s.id), onMouseLeave:()=>setHov(null),
+            onClick:()=>{ setSel(s.id); onSelect&&onSelect(s.id); }
+          },
+            React.createElement('span', { style:S.svcIcon },  s.icon),
+            React.createElement('span', { style:S.svcLabel }, s.label),
+            React.createElement('span', { style:S.svcSub },   s.sub)))),
+      // Footer
+      React.createElement('div', { style:S.menuFoot },
+        React.createElement('div', { style:S.shipInfo },
+          React.createElement('span', { style:S.shipTag },  '▶ DOCKED SHIP'),
+          React.createElement('span', { style:S.shipName }, 'Viper Mk.II')),
+        React.createElement('button', { style:S.undockBtn, onClick:onUndock }, 'UNDOCK'))
+    )
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DOCK HUD
+// ═══════════════════════════════════════════════════════════════════════════════
+function DockHUD({ onDock }) {
+  const [hov, setHov] = useState(false);
+  return React.createElement('div', { style:S.hudWrap },
+    React.createElement('div', { style:S.hudInfo },
+      React.createElement('div', { style:S.hudStation }, 'ASTRA PRIME STATION'),
+      React.createElement('div', { style:S.hudBay },     'Docking Bay 7  —  Approach Authorised'),
+      React.createElement('div', { style:S.hudDist },    'Distance: 0.2 km')),
+    React.createElement('button', {
+      style:{ ...S.dockBtn, ...(hov?S.dockBtnHov:{}) },
+      onMouseEnter:()=>setHov(true), onMouseLeave:()=>setHov(false),
+      onClick:onDock
+    }, React.createElement('span',{style:{fontSize:18}},'⬡'), ' DOCK')
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ROOT APP
+// ═══════════════════════════════════════════════════════════════════════════════
+function StationInterior() {
+  const [docked,       setDocked]       = useState(false);
+  const [showServices, setShowServices] = useState(false);
+
+  const handleDock = useCallback(() => {
+    setDocked(true);
+    setTimeout(()=>setShowServices(true), 1100);
+  }, []);
+
+  const handleUndock = useCallback(() => {
+    setShowServices(false);
+    setTimeout(()=>setDocked(false), 400);
+  }, []);
+
+  return React.createElement('div', { style:S.root },
+    // ── Canvas ──
+    React.createElement(Canvas, {
+      shadows:true,
+      style:S.canvas,
+      camera:{ fov:55, near:0.1, far:300, position:[0,2,22] },
+      gl:{ antialias:true, toneMapping:THREE.ACESFilmicToneMapping, toneMappingExposure:0.88 },
+    },
+      React.createElement('fog',  { attach:'fog', args:['#000a18',40,110] }),
+      React.createElement(HangarLighting),
+      React.createElement(HangarGeometry),
+      React.createElement(DockingPad,  { docked }),
+      React.createElement(PlayerShip, { docked }),
+      React.createElement(NPCTraffic),
+      React.createElement(DustParticles),
+      React.createElement(CameraRig,  { docked })
+    ),
+    // ── Overlays ──
+    React.createElement('div', { style:S.scanlines }),
+    React.createElement('div', { style:S.vignette  }),
+    React.createElement('div', { style:S.nameplate },
+      React.createElement('span',{style:{color:'#00ffcc',fontSize:14}},'◈'),
+      ' Astra Prime — Docking Bay 7'),
+    !docked && React.createElement(DockHUD, { onDock:handleDock }),
+    React.createElement(ServicesMenu, { visible:showServices, onUndock:handleUndock,
+      onSelect:id=>console.log('Service selected:', id) })
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// STYLES
+// ═══════════════════════════════════════════════════════════════════════════════
+const FF = "'Share Tech Mono', 'Courier New', monospace";
+const S = {
+  root:    { position:'relative', width:'100%', height:'100vh', background:'#000510', fontFamily:FF, overflow:'hidden' },
+  canvas:  { position:'absolute', inset:0, width:'100%', height:'100%' },
+  scanlines:{ position:'absolute', inset:0, background:'repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,.04) 2px,rgba(0,0,0,.04) 4px)', pointerEvents:'none', zIndex:2 },
+  vignette:{ position:'absolute', inset:0, background:'radial-gradient(ellipse at center,transparent 48%,rgba(0,5,16,.75) 100%)', pointerEvents:'none', zIndex:2 },
+  nameplate:{ position:'absolute', top:20, left:'50%', transform:'translateX(-50%)', color:'#00d4ff', fontSize:11, letterSpacing:3, textTransform:'uppercase', padding:'6px 20px', border:'1px solid rgba(0,212,255,.22)', background:'rgba(0,10,24,.65)', backdropFilter:'blur(8px)', zIndex:10, display:'flex', alignItems:'center', gap:10 },
+
+  hudWrap:   { position:'absolute', bottom:44, left:'50%', transform:'translateX(-50%)', display:'flex', flexDirection:'column', alignItems:'center', gap:18, zIndex:10 },
+  hudInfo:   { textAlign:'center', color:'rgba(0,212,255,.7)', fontSize:11, letterSpacing:2, lineHeight:1.9 },
+  hudStation:{ color:'#00ffcc', fontSize:13, letterSpacing:4, display:'block', marginBottom:2 },
+  hudBay:    { display:'block' },
+  hudDist:   { display:'block', color:'rgba(0,212,255,.4)', fontSize:10 },
+  dockBtn:   { display:'flex', alignItems:'center', gap:12, padding:'14px 48px', background:'transparent', border:'1px solid #00d4ff', color:'#00d4ff', fontSize:16, letterSpacing:6, cursor:'pointer', transition:'all .2s', fontFamily:FF, clipPath:'polygon(10px 0%,100% 0%,calc(100% - 10px) 100%,0% 100%)' },
+  dockBtnHov:{ background:'rgba(0,212,255,.1)', color:'#00ffcc', borderColor:'#00ffcc', boxShadow:'0 0 22px rgba(0,212,255,.3)' },
+
+  menuOverlay:{ position:'absolute', inset:0, display:'flex', alignItems:'center', justifyContent:'flex-start', paddingLeft:40, zIndex:20, animation:'fadeIn .45s ease' },
+  menuPanel:  { width:360, background:'rgba(4,11,26,.94)', border:'1px solid rgba(0,212,255,.28)', backdropFilter:'blur(22px)', padding:'24px 0', display:'flex', flexDirection:'column', boxShadow:'0 0 60px rgba(0,212,255,.09)' },
+  menuHeader: { padding:'0 24px 18px', borderBottom:'1px solid rgba(0,212,255,.14)', marginBottom:4 },
+  menuHeaderTop:{ marginBottom:10 },
+  menuTitle:  { display:'block', color:'#00d4ff', fontSize:13, letterSpacing:4, marginBottom:5 },
+  menuSub:    { display:'block', color:'rgba(0,212,255,.42)', fontSize:10, letterSpacing:2 },
+  statusRow:  { display:'flex', alignItems:'center', gap:8, color:'#00ffcc', fontSize:10, letterSpacing:1 },
+  statusDot:  { display:'inline-block', width:6, height:6, borderRadius:'50%', background:'#00ffcc', boxShadow:'0 0 6px #00ffcc' },
+  svcList:    { display:'flex', flexDirection:'column', padding:'6px 0' },
+  svcBtn:     { display:'grid', gridTemplateColumns:'36px 1fr', gridTemplateRows:'auto auto', alignItems:'center', padding:'13px 24px', background:'transparent', border:'none', borderLeft:'2px solid transparent', color:'rgba(0,212,255,.58)', cursor:'pointer', textAlign:'left', transition:'all .14s', fontFamily:FF, gap:'0 6px' },
+  svcBtnHover:{ background:'rgba(0,212,255,.05)', color:'#00d4ff', borderLeftColor:'rgba(0,212,255,.38)' },
+  svcBtnActive:{ background:'rgba(0,255,204,.07)', color:'#00ffcc', borderLeftColor:'#00ffcc' },
+  svcIcon:    { gridRow:'1/3', fontSize:20, display:'flex', alignItems:'center' },
+  svcLabel:   { display:'block', fontSize:11, letterSpacing:2, textTransform:'uppercase' },
+  svcSub:     { display:'block', fontSize:10, opacity:.48, letterSpacing:1 },
+  menuFoot:   { padding:'18px 24px 0', borderTop:'1px solid rgba(0,212,255,.14)', marginTop:4, display:'flex', alignItems:'center', justifyContent:'space-between' },
+  shipInfo:   { display:'flex', flexDirection:'column', gap:4 },
+  shipTag:    { color:'rgba(0,212,255,.38)', fontSize:9, letterSpacing:2 },
+  shipName:   { color:'#00d4ff', fontSize:13, letterSpacing:2 },
+  undockBtn:  { padding:'8px 18px', background:'transparent', border:'1px solid rgba(255,90,50,.45)', color:'rgba(255,90,50,.7)', fontSize:10, letterSpacing:3, cursor:'pointer', fontFamily:FF, transition:'all .14s' },
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MOUNT
+// ═══════════════════════════════════════════════════════════════════════════════
+createRoot(document.getElementById('root')).render(
+  React.createElement(StationInterior)
+);
+</script>
+</body>
+</html>
