@@ -1,0 +1,933 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>ADAM-flight-weapons · Demo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet"/>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{width:100%;height:100%;background:#020508;overflow:hidden;font-family:'Share Tech Mono','Courier New',monospace}
+#app{position:relative;width:100vw;height:100vh}
+canvas{display:block;position:absolute;inset:0;width:100%!important;height:100%!important}
+#hud{position:absolute;inset:0;pointer-events:none}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+@keyframes slidein{from{opacity:0;transform:translateX(10px)}to{opacity:1;transform:translateX(0)}}
+.pulse{animation:pulse .9s ease-in-out infinite}
+.btn-weapon{
+  display:flex;align-items:center;gap:8px;padding:8px 14px;cursor:pointer;
+  border-left:2px solid transparent;transition:all .15s;user-select:none;
+}
+.btn-weapon:hover{background:rgba(0,60,120,.2)}
+.btn-weapon.active{border-left-color:var(--tc);background:rgba(0,80,180,.2)}
+.log-entry{display:flex;justify-content:space-between;animation:slidein .2s ease}
+button{font-family:'Share Tech Mono','Courier New',monospace}
+</style>
+</head>
+<body>
+<div id="app">
+  <canvas id="c"></canvas>
+  <div id="hud"></div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+// ═══════════════════════════════════════════════════════════════════════════════
+// ZEROBYTES COMBAT HASH
+// ═══════════════════════════════════════════════════════════════════════════════
+function positionHash(x,y,z,salt=0){
+  let h=(salt*2654435769)|0;
+  h^=(x*374761393)|0; h=(Math.imul(h,0x9e3779b9)^(h>>>16))|0;
+  h^=(y*1013904223)|0; h=(Math.imul(h,0x85ebca6b)^(h>>>13))|0;
+  h^=(z*1664525)|0;   h=(Math.imul(h,0xc2b2ae35)^(h>>>16))|0;
+  return h>>>0;
+}
+function hashFloat(h){return(h&0xFFFFFF)/0x1000000}
+function combatRoll(wid,tick,wseed=77){return hashFloat(positionHash(wid,tick,wseed,0xDEADBEEF))}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// WEAPON DEFINITIONS
+// ═══════════════════════════════════════════════════════════════════════════════
+const WEAPONS=[
+  {id:0,name:'Mining Beam',   type:'thermal',  icon:'⚡',color:'#00ffcc',hex:0x00ffcc,fireRate:0,   alpha:8,  dps:12, continuous:true, desc:'Sustained thermal extraction beam'},
+  {id:1,name:'Combat Laser',  type:'thermal',  icon:'🔴',color:'#ff2200',hex:0xff2200,fireRate:1.2, alpha:22, dps:0,  continuous:false,desc:'High-frequency pulsed thermal lance'},
+  {id:2,name:'Missiles',      type:'explosive',icon:'🚀',color:'#ff8800',hex:0xff6600,fireRate:3.5, alpha:85, dps:0,  continuous:false,desc:'Lock-on warheads, AoE blast'},
+  {id:3,name:'Railguns',      type:'em',       icon:'⚡',color:'#44aaff',hex:0x2266ff,fireRate:2.8, alpha:110,dps:0,  continuous:false,desc:'Electromagnetic slug, instant travel'},
+  {id:4,name:'Artillery',     type:'kinetic',  icon:'💥',color:'#ffcc44',hex:0xcc8800,fireRate:6.0, alpha:260,dps:0,  continuous:false,desc:'Heavy kinetic shell, high alpha'},
+  {id:5,name:'Mining Drones', type:'thermal',  icon:'🤖',color:'#00ddff',hex:0x0088cc,fireRate:0,   alpha:6,  dps:18, continuous:true, desc:'3 autonomous extraction drones'},
+  {id:6,name:'Combat Drones', type:'thermal',  icon:'🤖',color:'#ff4488',hex:0xcc0044,fireRate:0.8, alpha:18, dps:0,  continuous:false,desc:'3 attack drones, rapid burst'},
+];
+const DTYPE_COLORS={thermal:'#ff6633',explosive:'#ff9900',em:'#44aaff',kinetic:'#ffdd44'};
+const DTYPE_HEX    ={thermal:0xff6633,explosive:0xff9900,em:0x44aaff,kinetic:0xffdd44};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SCENE SETUP
+// ═══════════════════════════════════════════════════════════════════════════════
+const canvas   = document.getElementById('c');
+const renderer = new THREE.WebGLRenderer({canvas,antialias:true,alpha:false});
+renderer.setPixelRatio(Math.min(window.devicePixelRatio,2));
+renderer.toneMapping=THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure=1.1;
+
+const scene  = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(55,1,.1,2000);
+camera.position.set(12,8,18);
+
+// Skybox
+function buildSkybox(){
+  const size=512,imgs=[];
+  for(let f=0;f<6;f++){
+    const cv=document.createElement('canvas');cv.width=cv.height=size;
+    const ctx=cv.getContext('2d');
+    const g=ctx.createRadialGradient(size/2,size/2,0,size/2,size/2,size/1.3);
+    g.addColorStop(0,'#060a14');g.addColorStop(.6,'#030608');g.addColorStop(1,'#010205');
+    ctx.fillStyle=g;ctx.fillRect(0,0,size,size);
+    let s=f*9301+49297;const rng=()=>{s=(s*9301+49297)%233280;return s/233280};
+    for(let i=0;i<380;i++){
+      const x=rng()*size,y=rng()*size,r=rng()*1.5+.3,b=rng();
+      ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);
+      ctx.fillStyle=b>.93?`rgba(180,220,255,${.7+rng()*.3})`:b>.85?`rgba(255,200,140,${.5+rng()*.3})`:`rgba(200,220,255,${.15+rng()*.4})`;
+      ctx.fill();
+    }
+    imgs.push(cv);
+  }
+  const t=new THREE.CubeTexture(imgs);t.needsUpdate=true;return t;
+}
+scene.background=buildSkybox();
+
+// Lights
+scene.add(new THREE.AmbientLight(0x1a2040,.1));
+const sun=new THREE.DirectionalLight(0xffd8a0,1.4);sun.position.set(80,40,-60);scene.add(sun);
+const fillLight=new THREE.PointLight(0x2244aa,.3);fillLight.position.set(-40,20,40);scene.add(fillLight);
+
+// Stars
+const sg=new THREE.BufferGeometry();
+const sp=new Float32Array(8000*3);for(let i=0;i<8000*3;i++)sp[i]=(Math.random()-.5)*1600;
+sg.setAttribute('position',new THREE.BufferAttribute(sp,3));
+scene.add(new THREE.Points(sg,new THREE.PointsMaterial({color:0x99bbdd,size:.7,transparent:true,opacity:.45,sizeAttenuation:true})));
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PLAYER SHIP (diamond)
+// ═══════════════════════════════════════════════════════════════════════════════
+const shipGroup=new THREE.Group();
+const hullMat=new THREE.MeshStandardMaterial({color:0x1a2840,metalness:.95,roughness:.15,emissive:0x0a1525,emissiveIntensity:.3});
+const spikeMat=new THREE.MeshStandardMaterial({color:0x0d1e35,metalness:.9,roughness:.2});
+const wingMat=new THREE.MeshStandardMaterial({color:0x112030,metalness:.95,roughness:.1,emissive:0x0a2040,emissiveIntensity:.4});
+shipGroup.add(new THREE.Mesh(new THREE.OctahedronGeometry(1.5,0),hullMat));
+const fore=new THREE.Mesh(new THREE.ConeGeometry(.35,1.5,6),spikeMat);fore.position.z=2.2;fore.rotation.x=Math.PI/2;shipGroup.add(fore);
+const aft=new THREE.Mesh(new THREE.ConeGeometry(.35,1.5,6),spikeMat);aft.position.z=-2.2;aft.rotation.x=-Math.PI/2;shipGroup.add(aft);
+[-1,1].forEach(s=>{const w=new THREE.Mesh(new THREE.BoxGeometry(1.4,.08,.9),wingMat);w.position.set(s*1.8,0,0);w.rotation.z=s*.4;shipGroup.add(w);});
+const engGlow=new THREE.Mesh(new THREE.SphereGeometry(.22,12,8),new THREE.MeshStandardMaterial({color:0x2255cc,emissive:0x3366ff,emissiveIntensity:3,transparent:true,opacity:.85}));
+engGlow.position.z=-2.4;shipGroup.add(engGlow);
+const eLight=new THREE.PointLight(0x4488ff,2,6);eLight.position.z=-1.8;shipGroup.add(eLight);
+scene.add(shipGroup);
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DUMMY TARGET
+// ═══════════════════════════════════════════════════════════════════════════════
+const TARGET=new THREE.Vector3(0,0,-40);
+const targetGroup=new THREE.Group();targetGroup.position.copy(TARGET);
+const tBodyMat=new THREE.MeshStandardMaterial({color:0x1a3040,metalness:.7,roughness:.4,emissive:0x002244,emissiveIntensity:.3});
+const tBody=new THREE.Mesh(new THREE.IcosahedronGeometry(2.2,1),tBodyMat);targetGroup.add(tBody);
+const tCage=new THREE.Mesh(new THREE.IcosahedronGeometry(2.53,1),new THREE.MeshBasicMaterial({color:0x0066aa,transparent:true,opacity:.15,wireframe:true,depthWrite:false}));targetGroup.add(tCage);
+const ringGeo=new THREE.TorusGeometry(3,.06,8,40);
+const ringMat=new THREE.MeshBasicMaterial({color:0x00ccff,transparent:true,opacity:.5,blending:THREE.AdditiveBlending,depthWrite:false});
+const ring1=new THREE.Mesh(ringGeo,ringMat);ring1.rotation.x=Math.PI/2;targetGroup.add(ring1);
+const ring2=new THREE.Mesh(new THREE.TorusGeometry(3,.04,8,40),new THREE.MeshBasicMaterial({color:0x00ccff,transparent:true,opacity:.3,blending:THREE.AdditiveBlending,depthWrite:false}));
+ring2.rotation.z=Math.PI/3;targetGroup.add(ring2);
+const tLight=new THREE.PointLight(0x004488,1.5,8);targetGroup.add(tLight);
+scene.add(targetGroup);
+
+let hitFlash=0;
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// BEAM SYSTEM
+// ═══════════════════════════════════════════════════════════════════════════════
+const beams=[];
+function makeBeam(from,to,color,width=0.08,additive=true){
+  const dir=to.clone().sub(from);
+  const len=dir.length();
+  const mid=from.clone().add(to).multiplyScalar(.5);
+  const q=new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,1,0),dir.normalize());
+  const mat=new THREE.MeshBasicMaterial({color,transparent:true,opacity:1,blending:additive?THREE.AdditiveBlending:THREE.NormalBlending,depthWrite:false});
+  const mesh=new THREE.Mesh(new THREE.CylinderGeometry(width,width,len,5),mat);
+  mesh.position.copy(mid);mesh.quaternion.copy(q);
+  scene.add(mesh);
+  return{mesh,mat,from:from.clone(),to:to.clone(),width,color};
+}
+function updateBeam(b,from,to){
+  const dir=to.clone().sub(from);const len=dir.length();
+  const mid=from.clone().add(to).multiplyScalar(.5);
+  const q=new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,1,0),dir.normalize());
+  b.mesh.position.copy(mid);b.mesh.quaternion.copy(q);
+  b.mesh.scale.set(1,len/(b.mesh.geometry.parameters?.height||1),1);
+}
+function removeBeam(b){scene.remove(b.mesh);b.mesh.geometry.dispose();b.mat.dispose();}
+
+// Persistent weapon beam
+let activeBeam=null;
+function setBeam(from,to,color,width){
+  if(activeBeam){removeBeam(activeBeam);activeBeam=null;}
+  if(from&&to){activeBeam=makeBeam(from,to,color,width);}
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// INSTANCED SPARKS
+// ═══════════════════════════════════════════════════════════════════════════════
+const SPARK_MAX=300;
+const sparkGeo=new THREE.SphereGeometry(.09,4,3);
+const sparkMat=new THREE.MeshBasicMaterial({color:0xffffff,transparent:true,opacity:.85,blending:THREE.AdditiveBlending,depthWrite:false});
+const sparkMesh=new THREE.InstancedMesh(sparkGeo,sparkMat,SPARK_MAX);
+sparkMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+scene.add(sparkMesh);
+const sparkPool=Array.from({length:SPARK_MAX},()=>({pos:new THREE.Vector3(),vel:new THREE.Vector3(),life:0,maxLife:0,active:false,color:new THREE.Color()}));
+const sparkDummy=new THREE.Object3D();
+const sparkColor=new THREE.Color();
+
+function spawnSparks(pos,color,count=10){
+  let spawned=0;
+  for(const p of sparkPool){
+    if(!p.active&&spawned<count){
+      p.pos.copy(pos);
+      p.vel.set((Math.random()-.5)*10,(Math.random()-.5)*10,(Math.random()-.5)*10);
+      p.maxLife=p.life=.25+Math.random()*.4;p.active=true;p.color.set(color);
+      spawned++;
+    }
+  }
+}
+function tickSparks(dt){
+  let v=0;
+  sparkMat.color.set(0xffffff);
+  for(const p of sparkPool){
+    if(!p.active)continue;
+    p.life-=dt;if(p.life<=0){p.active=false;continue;}
+    p.pos.addScaledVector(p.vel,dt);p.vel.multiplyScalar(.92);
+    const s=.5*Math.max(0,p.life/p.maxLife);
+    sparkDummy.position.copy(p.pos);sparkDummy.scale.setScalar(Math.max(.0001,s));
+    sparkDummy.updateMatrix();sparkMesh.setMatrixAt(v,sparkDummy.matrix);
+    sparkMesh.setColorAt(v,p.color);v++;
+  }
+  sparkDummy.scale.setScalar(.0001);sparkDummy.updateMatrix();
+  for(let i=v;i<SPARK_MAX;i++){sparkMesh.setMatrixAt(i,sparkDummy.matrix);}
+  sparkMesh.instanceMatrix.needsUpdate=true;
+  if(sparkMesh.instanceColor)sparkMesh.instanceColor.needsUpdate=true;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MISSILE SYSTEM
+// ═══════════════════════════════════════════════════════════════════════════════
+const activeMissiles=[];
+const missileMat=new THREE.MeshStandardMaterial({color:0xff8800,emissive:0xff6600,emissiveIntensity:2,metalness:.8,roughness:.2});
+const missileGeo=new THREE.ConeGeometry(.13,.85,6);
+function spawnMissile(){
+  const mesh=new THREE.Mesh(missileGeo,missileMat.clone());
+  const pLight=new THREE.PointLight(0xff8800,1.5,5);
+  const g=new THREE.Group();g.add(mesh);g.add(pLight);
+  const ox=(Math.random()-.5)*2;
+  g.position.set(shipGroup.position.x+ox,shipGroup.position.y+.1,shipGroup.position.z+2.5);
+  scene.add(g);
+  // trail
+  const trailGeo=new THREE.BufferGeometry();
+  const trailPos=new Float32Array(20*3);trailGeo.setAttribute('position',new THREE.BufferAttribute(trailPos,3));
+  const trail=new THREE.Line(trailGeo,new THREE.LineBasicMaterial({color:0xff8800,transparent:true,opacity:.4,blending:THREE.AdditiveBlending}));
+  scene.add(trail);
+  const hist=[];
+  activeMissiles.push({group:g,trail,trailGeo,hist,life:8,hit:false});
+}
+function tickMissiles(dt){
+  for(let i=activeMissiles.length-1;i>=0;i--){
+    const m=activeMissiles[i];
+    if(m.hit){scene.remove(m.group);scene.remove(m.trail);activeMissiles.splice(i,1);continue;}
+    m.life-=dt;
+    const dir=TARGET.clone().sub(m.group.position).normalize();
+    m.group.position.addScaledVector(dir,30*dt);
+    m.group.lookAt(TARGET);
+    m.hist.push(m.group.position.clone());if(m.hist.length>12)m.hist.shift();
+    const tp=m.trailGeo.attributes.position.array;
+    for(let j=0;j<m.hist.length;j++){tp[j*3]=m.hist[j].x;tp[j*3+1]=m.hist[j].y;tp[j*3+2]=m.hist[j].z;}
+    m.trailGeo.attributes.position.needsUpdate=true;
+    m.trailGeo.setDrawRange(0,m.hist.length);
+    if(m.group.position.distanceTo(TARGET)<2.8){
+      m.hit=true;
+      spawnExplosion(m.group.position.clone(),0xff6600);
+      hitFlash=1;spawnSparks(TARGET.clone(),'#ff8800',14);
+      registerHit(2);
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// EXPLOSION SYSTEM
+// ═══════════════════════════════════════════════════════════════════════════════
+const activeExplosions=[];
+const expGeo=new THREE.SphereGeometry(.8,12,8);
+const expMat=new THREE.MeshBasicMaterial({color:0xff6600,transparent:true,opacity:.9,blending:THREE.AdditiveBlending,depthWrite:false});
+const expWire=new THREE.MeshBasicMaterial({color:0xffffff,transparent:true,opacity:.3,blending:THREE.AdditiveBlending,wireframe:true,depthWrite:false});
+function spawnExplosion(pos,color){
+  const g=new THREE.Group();
+  g.position.copy(pos);
+  const m1=new THREE.Mesh(expGeo,expMat.clone());m1.material.color.setHex(color);
+  const m2=new THREE.Mesh(new THREE.SphereGeometry(.8,8,6),expWire.clone());m2.scale.setScalar(1.6);
+  g.add(m1);g.add(m2);
+  scene.add(g);
+  activeExplosions.push({group:g,life:.7,maxLife:.7});
+}
+function tickExplosions(dt){
+  for(let i=activeExplosions.length-1;i>=0;i--){
+    const e=activeExplosions[i];
+    e.life-=dt;
+    if(e.life<=0){scene.remove(e.group);activeExplosions.splice(i,1);continue;}
+    const t=1-e.life/e.maxLife;
+    const s=1+t*5;e.group.scale.setScalar(s);
+    e.group.children.forEach(c=>{if(c.material)c.material.opacity=Math.max(0,1-t*1.5);});
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// RAILGUN STREAKS + EM RINGS
+// ═══════════════════════════════════════════════════════════════════════════════
+const activeRings=[];
+const ringPoolGeo=new THREE.TorusGeometry(1,.07,8,32);
+function spawnEMRing(pos,color){
+  const m=new THREE.Mesh(ringPoolGeo,new THREE.MeshBasicMaterial({color,transparent:true,opacity:.9,blending:THREE.AdditiveBlending,depthWrite:false}));
+  m.position.copy(pos);m.rotation.x=Math.PI/2;
+  scene.add(m);
+  activeRings.push({mesh:m,life:.6,maxLife:.6});
+}
+function tickRings(dt){
+  for(let i=activeRings.length-1;i>=0;i--){
+    const r=activeRings[i];r.life-=dt;
+    if(r.life<=0){scene.remove(r.mesh);activeRings.splice(i,1);continue;}
+    const t=1-r.life/r.maxLife;
+    r.mesh.scale.setScalar(1+t*6);
+    r.mesh.material.opacity=Math.max(0,1-t*1.7);
+  }
+}
+const activeRailStreaks=[];
+function spawnRailStreak(){
+  const from=new THREE.Vector3(shipGroup.position.x,shipGroup.position.y+.5,shipGroup.position.z+2.5);
+  const b=makeBeam(from,TARGET,0x44aaff,.14);
+  activeRailStreaks.push({beam:b,life:.28,maxLife:.28});
+  hitFlash=1;spawnSparks(TARGET.clone(),'#44aaff',12);
+  spawnEMRing(TARGET.clone(),0x44aaff);
+  spawnEMRing(new THREE.Vector3(TARGET.x,TARGET.y+.6,TARGET.z),0x2255ff);
+  registerHit(3);
+}
+function tickRailStreaks(dt){
+  for(let i=activeRailStreaks.length-1;i>=0;i--){
+    const r=activeRailStreaks[i];r.life-=dt;
+    if(r.life<=0){removeBeam(r.beam);activeRailStreaks.splice(i,1);continue;}
+    r.beam.mat.opacity=r.life/r.maxLife;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ARTILLERY SLUG
+// ═══════════════════════════════════════════════════════════════════════════════
+const activeSlugs=[];
+const slugGeo=new THREE.SphereGeometry(.28,6,4);
+const slugMat=new THREE.MeshStandardMaterial({color:0xffcc44,emissive:0xcc8800,emissiveIntensity:3,metalness:.6,roughness:.3});
+function spawnArtSlug(){
+  const mesh=new THREE.Mesh(slugGeo,slugMat.clone());
+  mesh.position.set(shipGroup.position.x+.8,shipGroup.position.y+.1,shipGroup.position.z+2.5);
+  scene.add(mesh);
+  activeSlugs.push({mesh,hit:false});
+}
+function tickSlugs(dt){
+  for(let i=activeSlugs.length-1;i>=0;i--){
+    const s=activeSlugs[i];
+    if(s.hit){scene.remove(s.mesh);activeSlugs.splice(i,1);continue;}
+    const dir=TARGET.clone().sub(s.mesh.position).normalize();
+    s.mesh.position.addScaledVector(dir,18*dt);
+    if(s.mesh.position.distanceTo(TARGET)<2.5){
+      s.hit=true;
+      spawnExplosion(s.mesh.position.clone(),0xffcc44);
+      [-.5,0,.5].forEach(offset=>spawnEMRing(new THREE.Vector3(TARGET.x,TARGET.y+offset,TARGET.z),0xffcc44));
+      hitFlash=1;spawnSparks(TARGET.clone(),'#ffcc44',14);
+      registerHit(4);
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TARGET HEALTH
+// ═══════════════════════════════════════════════════════════════════════════════
+const TARGET_MAX_HP = 2000;
+let targetHp = TARGET_MAX_HP;
+let targetDestroyed = false;
+let targetRespawnTimer = 0;
+const TARGET_RESPAWN_TIME = 8; // seconds before target reappears
+
+function damageTarget(amount){
+  if(targetDestroyed) return;
+  targetHp = Math.max(0, targetHp - amount);
+  if(targetHp <= 0) destroyTarget();
+  updateTargetHud();
+}
+
+function destroyTarget(){
+  if(targetDestroyed) return;
+  targetDestroyed = true;
+  targetGroup.visible = false;
+  // Big explosion
+  spawnExplosion(TARGET.clone(), 0xff4400);
+  spawnExplosion(new THREE.Vector3(TARGET.x+1.5,TARGET.y,TARGET.z), 0xff8800);
+  spawnExplosion(new THREE.Vector3(TARGET.x-1,TARGET.y+1,TARGET.z-.5), 0xffcc00);
+  [0,Math.PI/3,Math.PI*2/3].forEach(a=>spawnEMRing(new THREE.Vector3(TARGET.x,TARGET.y,TARGET.z),0xff6600));
+  spawnSparks(TARGET.clone(),'#ff8800',40);
+  // Recall all drones
+  recallDrones();
+  targetRespawnTimer = TARGET_RESPAWN_TIME;
+  updateTargetHud();
+}
+
+function respawnTarget(){
+  targetDestroyed = false;
+  targetHp = TARGET_MAX_HP;
+  targetGroup.visible = true;
+  updateTargetHud();
+  // If drones are docked and weapon still active, re-launch
+  if(activeWeaponId===5||activeWeaponId===6){
+    activeDrones.forEach(d=>{ if(d.state==='DOCKED') d.state='LAUNCHING'; });
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DRONES  — full state machine
+// States: DOCKED → LAUNCHING → APPROACHING → ORBITING → RETURNING → DOCKED
+// ═══════════════════════════════════════════════════════════════════════════════
+const DRONE_STATES = {
+  DOCKED:      'DOCKED',
+  LAUNCHING:   'LAUNCHING',
+  APPROACHING: 'APPROACHING',
+  ORBITING:    'ORBITING',
+  RETURNING:   'RETURNING',
+};
+
+// Orbit radius around TARGET, speed, and fire cadence per type
+const DRONE_CFG = {
+  5: { orbitR: 7,  orbitSpd: 0.55, approachSpd: 14, fireRate: 2.8, beamW: 0.04 }, // mining
+  6: { orbitR: 5,  orbitSpd: 0.95, approachSpd: 16, fireRate: 1.4, beamW: 0.05 }, // combat
+};
+
+// Dock positions: tight formation around ship bow
+const DOCK_OFFSETS = [
+  new THREE.Vector3( 1.2, 0.4, -1.8),
+  new THREE.Vector3(-1.2, 0.4, -1.8),
+  new THREE.Vector3( 0.0,-0.5, -2.2),
+];
+
+const activeDrones=[];
+const droneGeo=new THREE.OctahedronGeometry(.4,0);
+const activeDroneBeams=[];
+
+function spawnDrones(weaponId){
+  clearDrones();
+  const w=WEAPONS[weaponId];
+  for(let i=0;i<3;i++){
+    const mat=new THREE.MeshStandardMaterial({
+      color:w.hex, emissive:w.hex, emissiveIntensity:.6, metalness:.9, roughness:.2
+    });
+    const mesh=new THREE.Mesh(droneGeo,mat);
+    const light=new THREE.PointLight(w.hex,1,3.5);
+    const g=new THREE.Group();
+    g.add(mesh);g.add(light);
+    // Start docked at ship
+    const dockWorld = shipGroup.position.clone().add(DOCK_OFFSETS[i]);
+    g.position.copy(dockWorld);
+    scene.add(g);
+    activeDrones.push({
+      group:     g,
+      mat,
+      orbitAngle: (i/3)*Math.PI*2,   // angle around TARGET when orbiting
+      fireTimer:  i * 0.6,            // stagger initial fire
+      weaponId,
+      idx:        i,
+      state:      targetDestroyed ? DRONE_STATES.DOCKED : DRONE_STATES.LAUNCHING,
+      vel:        new THREE.Vector3(),
+    });
+  }
+}
+
+function recallDrones(){
+  for(const d of activeDrones){
+    if(d.state !== DRONE_STATES.DOCKED) d.state = DRONE_STATES.RETURNING;
+  }
+  clearDroneBeams();
+}
+
+function clearDrones(){
+  activeDrones.forEach(d=>scene.remove(d.group));
+  activeDrones.length=0;
+  clearDroneBeams();
+}
+
+function clearDroneBeams(){
+  activeDroneBeams.forEach(b=>removeBeam(b.beam));
+  activeDroneBeams.length=0;
+}
+
+function tickDrones(dt){
+  const cfg5 = DRONE_CFG[5];
+  const cfg6 = DRONE_CFG[6];
+
+  for(const d of activeDrones){
+    const isCombat = d.weaponId===6;
+    const cfg = isCombat ? cfg6 : cfg5;
+    const w   = WEAPONS[d.weaponId];
+    const pos = d.group.position;
+
+    // ── DOCKED ────────────────────────────────────────────────────────────────
+    if(d.state === DRONE_STATES.DOCKED){
+      // Hover at dock point, bob gently
+      const dockWorld = shipGroup.position.clone().add(DOCK_OFFSETS[d.idx]);
+      dockWorld.y += Math.sin(performance.now()*0.001 + d.idx*1.2)*0.12;
+      pos.lerp(dockWorld, 0.18);
+      d.mat.emissiveIntensity = 0.15 + Math.sin(performance.now()*0.002+d.idx)*0.1;
+      continue;
+    }
+
+    // ── LAUNCHING ─────────────────────────────────────────────────────────────
+    if(d.state === DRONE_STATES.LAUNCHING){
+      // Move away from ship toward the approach vector before heading to target
+      const launchPoint = shipGroup.position.clone().add(
+        new THREE.Vector3(
+          Math.cos(d.orbitAngle)*3,
+          (d.idx-1)*1.5,
+          Math.sin(d.orbitAngle)*3
+        )
+      );
+      pos.lerp(launchPoint, 0.08);
+      d.mat.emissiveIntensity = 0.6;
+      if(pos.distanceTo(launchPoint) < 1.5) d.state = DRONE_STATES.APPROACHING;
+      continue;
+    }
+
+    // ── APPROACHING ───────────────────────────────────────────────────────────
+    if(d.state === DRONE_STATES.APPROACHING){
+      if(targetDestroyed){ d.state = DRONE_STATES.RETURNING; continue; }
+      // Target orbit position at current angle
+      const orbitPt = new THREE.Vector3(
+        TARGET.x + Math.cos(d.orbitAngle)*cfg.orbitR,
+        TARGET.y + Math.sin(d.orbitAngle*0.7)*1.8,
+        TARGET.z + Math.sin(d.orbitAngle)*cfg.orbitR
+      );
+      const toOrbit = orbitPt.clone().sub(pos);
+      const dist    = toOrbit.length();
+      // Decelerate as we close in
+      const speed = Math.min(cfg.approachSpd, dist * 3.5);
+      pos.addScaledVector(toOrbit.normalize(), speed * dt);
+      d.mat.emissiveIntensity = 0.8;
+      if(dist < 1.8) d.state = DRONE_STATES.ORBITING;
+      continue;
+    }
+
+    // ── ORBITING ──────────────────────────────────────────────────────────────
+    if(d.state === DRONE_STATES.ORBITING){
+      if(targetDestroyed){ d.state = DRONE_STATES.RETURNING; continue; }
+
+      d.orbitAngle += cfg.orbitSpd * dt;
+      const orbitPt = new THREE.Vector3(
+        TARGET.x + Math.cos(d.orbitAngle)*cfg.orbitR,
+        TARGET.y + Math.sin(d.orbitAngle*0.7)*1.8,
+        TARGET.z + Math.sin(d.orbitAngle)*cfg.orbitR
+      );
+      pos.lerp(orbitPt, 0.25);
+      // Face the target
+      d.group.lookAt(TARGET);
+      d.mat.emissiveIntensity = 0.9 + Math.sin(performance.now()*0.004+d.idx)*0.2;
+
+      // Fire
+      d.fireTimer += dt;
+      if(d.fireTimer >= cfg.fireRate){
+        d.fireTimer = 0;
+        const beamFrom = pos.clone();
+        const b = makeBeam(beamFrom, TARGET, w.hex, cfg.beamW);
+        activeDroneBeams.push({beam:b, life:0.18});
+        hitFlash = isCombat ? 0.7 : 0.4;
+        spawnSparks(TARGET.clone(), w.color, isCombat?7:4);
+        // Damage target via zerobytes roll
+        const roll = combatRoll(w.id, combatTick, 99);
+        const dmg  = Math.round(w.alpha*(0.8+roll*0.4));
+        damageTarget(dmg);
+        registerHit(d.weaponId);
+      }
+      continue;
+    }
+
+    // ── RETURNING ─────────────────────────────────────────────────────────────
+    if(d.state === DRONE_STATES.RETURNING){
+      const dockWorld = shipGroup.position.clone().add(DOCK_OFFSETS[d.idx]);
+      const toDock    = dockWorld.clone().sub(pos);
+      const dist      = toDock.length();
+      const speed     = Math.min(cfg.approachSpd * 1.2, dist * 4);
+      pos.addScaledVector(toDock.normalize(), speed * dt);
+      d.mat.emissiveIntensity = 0.25;
+      if(dist < 0.8){
+        d.state = DRONE_STATES.DOCKED;
+        d.fireTimer = d.idx * 0.6; // reset stagger
+      }
+      continue;
+    }
+  }
+
+  // Drone beam lifetime
+  for(let i=activeDroneBeams.length-1;i>=0;i--){
+    activeDroneBeams[i].life -= dt;
+    if(activeDroneBeams[i].life<=0){
+      removeBeam(activeDroneBeams[i].beam);
+      activeDroneBeams.splice(i,1);
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ACTIVE WEAPON STATE + FIRE TIMER
+// ═══════════════════════════════════════════════════════════════════════════════
+let activeWeaponId=null;
+let fireInterval=null;
+let combatTick=0;
+let totalDamage=0;
+const combatLog=[];
+
+function registerHit(wid){
+  const w=WEAPONS[wid];
+  const roll=combatRoll(wid,combatTick++,77);
+  const base=w.continuous?w.dps*.1:w.alpha;
+  const dmg=Math.round(base*(.85+roll*.3));
+  totalDamage+=dmg;
+  combatLog.push({weapon:w.name,damage:dmg,type:w.type});
+  if(combatLog.length>50)combatLog.shift();
+  updateCombatLog();
+  // Non-drone weapons apply damage here; drones call damageTarget themselves
+  if(wid!==5&&wid!==6) damageTarget(dmg);
+}
+
+function activateWeapon(id){
+  deactivateWeapon();
+  activeWeaponId=id;
+  const w=WEAPONS[id];
+
+  if(id===5||id===6){
+    spawnDrones(id);
+    // Drones self-manage fire via state machine — no setInterval needed
+    updateHud();
+    return;
+  }
+
+  function fire(){
+    if(targetDestroyed) return;
+    if(id===0||id===1){
+      hitFlash=id===1?.8:.3;
+      spawnSparks(TARGET.clone(),w.color,id===1?8:3);
+      registerHit(id);
+    }
+    if(id===2)spawnMissile();
+    if(id===3)spawnRailStreak();
+    if(id===4)spawnArtSlug();
+  }
+
+  if(w.continuous){
+    fire();
+    fireInterval=setInterval(fire,100);
+  } else {
+    fire();
+    fireInterval=setInterval(fire,w.fireRate*1000);
+  }
+  updateHud();
+}
+
+function deactivateWeapon(){
+  if(fireInterval){clearInterval(fireInterval);fireInterval=null;}
+  if(activeWeaponId===5||activeWeaponId===6){clearDrones();}
+  if(activeBeam){removeBeam(activeBeam);activeBeam=null;}
+  activeWeaponId=null;
+  updateHud();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ORBIT CAMERA
+// ═══════════════════════════════════════════════════════════════════════════════
+const orbit={theta:.3,phi:1.1,radius:36,target:new THREE.Vector3(0,0,-20)};
+let dragging=false,lastMX=0,lastMY=0;
+function applyOrbit(){
+  const{theta,phi,radius,target}=orbit;
+  camera.position.set(
+    target.x+radius*Math.sin(phi)*Math.sin(theta),
+    target.y+radius*Math.cos(phi),
+    target.z+radius*Math.sin(phi)*Math.cos(theta)
+  );
+  camera.lookAt(target);
+}
+applyOrbit();
+canvas.addEventListener('mousedown',e=>{dragging=true;lastMX=e.clientX;lastMY=e.clientY;});
+window.addEventListener('mouseup',()=>{dragging=false;});
+window.addEventListener('mousemove',e=>{
+  if(!dragging)return;
+  orbit.theta-=(e.clientX-lastMX)*.005;
+  orbit.phi=Math.max(.05,Math.min(Math.PI-.05,orbit.phi+(e.clientY-lastMY)*.005));
+  lastMX=e.clientX;lastMY=e.clientY;
+});
+canvas.addEventListener('wheel',e=>{orbit.radius=Math.max(8,Math.min(80,orbit.radius*(1+e.deltaY*.001)));},{passive:true});
+
+// Touch
+canvas.addEventListener('touchstart',e=>{dragging=true;lastMX=e.touches[0].clientX;lastMY=e.touches[0].clientY;});
+canvas.addEventListener('touchend',()=>{dragging=false;});
+canvas.addEventListener('touchmove',e=>{
+  const dx=e.touches[0].clientX-lastMX,dy=e.touches[0].clientY-lastMY;
+  orbit.theta-=dx*.005;orbit.phi=Math.max(.05,Math.min(Math.PI-.05,orbit.phi+dy*.005));
+  lastMX=e.touches[0].clientX;lastMY=e.touches[0].clientY;
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// RESIZE
+// ═══════════════════════════════════════════════════════════════════════════════
+function resize(){
+  renderer.setSize(window.innerWidth,window.innerHeight,false);
+  camera.aspect=window.innerWidth/window.innerHeight;
+  camera.updateProjectionMatrix();
+}
+window.addEventListener('resize',resize);resize();
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// HUD BUILDER
+// ═══════════════════════════════════════════════════════════════════════════════
+const hud=document.getElementById('hud');
+
+function buildHud(){
+  hud.innerHTML=`
+  <!-- Top bar -->
+  <div style="position:absolute;top:0;left:0;right:0;height:38px;display:flex;align-items:center;justify-content:space-between;padding:0 20px;background:rgba(0,10,22,.9);border-bottom:1px solid rgba(0,180,255,.18);pointer-events:auto;">
+    <span style="color:#00c8ff;font-size:12px;letter-spacing:.2em;font-weight:700;">◈ ADAM COMBAT SYSTEMS</span>
+    <span style="color:#224466;font-size:10px;letter-spacing:.15em;">TARGET LOCKED · SCROLL ZOOM · DRAG ORBIT</span>
+    <label style="color:#ffaa00;font-size:11px;letter-spacing:.15em;cursor:pointer;border:1px solid rgba(255,170,0,.3);padding:3px 10px;border-radius:2px;background:rgba(80,40,0,.3);">
+      ⬆ GLB<input type="file" accept=".glb" id="glbInput" style="display:none"/>
+    </label>
+  </div>
+
+  <!-- Weapon selector -->
+  <div id="weaponPanel" style="position:absolute;left:16px;top:54px;width:224px;background:rgba(0,8,18,.92);border:1px solid rgba(0,180,255,.18);border-radius:3px;padding:10px 0;pointer-events:auto;">
+    <div style="color:#224466;font-size:9px;letter-spacing:.2em;padding:0 14px 8px;border-bottom:1px solid rgba(0,180,255,.15);">WEAPON SELECT</div>
+    ${WEAPONS.map(w=>`
+      <div class="btn-weapon" id="wbtn${w.id}" data-id="${w.id}" style="--tc:${DTYPE_COLORS[w.type]}">
+        <span style="font-size:14px">${w.icon}</span>
+        <div style="flex:1">
+          <div id="wname${w.id}" style="color:#88ccee;font-size:11px;letter-spacing:.08em">${w.name}</div>
+          <div style="color:#224466;font-size:9px;letter-spacing:.1em">${w.type.toUpperCase()} · ${w.continuous?`${w.dps} DPS`:`${w.alpha}α · ${w.fireRate}s`}</div>
+        </div>
+        <div id="wdot${w.id}" style="display:none;width:6px;height:6px;border-radius:50%;background:${DTYPE_COLORS[w.type]};box-shadow:0 0 6px ${DTYPE_COLORS[w.type]}"></div>
+      </div>`).join('')}
+  </div>
+
+  <!-- Combat log -->
+  <div style="position:absolute;right:16px;top:54px;width:204px;background:rgba(0,8,18,.92);border:1px solid rgba(0,180,255,.18);border-radius:3px;padding:10px 14px;max-height:340px;overflow:hidden;">
+    <div style="color:#224466;font-size:9px;letter-spacing:.2em;margin-bottom:8px;border-bottom:1px solid rgba(0,180,255,.15);padding-bottom:6px;">COMBAT LOG</div>
+    <div style="margin-bottom:10px;">
+      <span style="color:#224466;font-size:9px;">TOTAL DAMAGE  </span>
+      <span id="totalDmg" style="color:#00c8ff;font-size:16px;letter-spacing:.05em;">0</span>
+    </div>
+    <div id="logEntries" style="display:flex;flex-direction:column;gap:3px;"></div>
+  </div>
+
+  <!-- Target health panel -->
+  <div style="position:absolute;left:50%;top:54px;transform:translateX(-50%);width:260px;background:rgba(0,8,18,.92);border:1px solid rgba(0,180,255,.18);border-radius:3px;padding:10px 14px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+      <span style="color:#224466;font-size:9px;letter-spacing:.2em;">TARGET INTEGRITY</span>
+      <span id="targetStatus" style="color:#00cc44;font-size:9px;letter-spacing:.15em;">● LOCKED</span>
+    </div>
+    <div style="height:8px;background:rgba(0,40,60,.8);border:1px solid rgba(0,180,255,.2);border-radius:2px;overflow:hidden;margin-bottom:4px;">
+      <div id="targetHpBar" style="height:100%;width:100%;background:#00cc44;border-radius:2px;transition:width .1s,background .3s;"></div>
+    </div>
+    <div style="display:flex;justify-content:space-between;">
+      <span style="color:#224466;font-size:9px;letter-spacing:.1em;">HP</span>
+      <span id="targetHpLabel" style="color:#88ccee;font-size:9px;letter-spacing:.05em;">${TARGET_MAX_HP} / ${TARGET_MAX_HP}</span>
+    </div>
+  </div>
+
+  <!-- Drone status panel (shown when drones active) -->
+  <div id="dronePanel" style="display:none;position:absolute;left:16px;bottom:20px;width:200px;background:rgba(0,8,18,.92);border:1px solid rgba(0,180,255,.18);border-radius:3px;padding:8px 12px;">
+    <div style="color:#224466;font-size:9px;letter-spacing:.2em;margin-bottom:6px;">DRONE STATUS</div>
+    <div id="droneStates" style="display:flex;flex-direction:column;gap:3px;"></div>
+  </div>
+
+  <!-- Active weapon status bar -->
+  <div id="activeBar" style="display:none;position:absolute;bottom:20px;left:50%;transform:translateX(-50%);display:none;flex-direction:column;align-items:center;gap:6px;background:rgba(0,8,18,.92);border-radius:3px;padding:10px 20px;pointer-events:auto;">
+    <div style="display:flex;align-items:center;gap:10px;">
+      <div id="activeDot" class="pulse" style="width:8px;height:8px;border-radius:50%;"></div>
+      <span id="activeName" style="font-size:12px;letter-spacing:.2em;font-weight:700;"></span>
+      <div id="activeDot2" class="pulse" style="width:8px;height:8px;border-radius:50%;"></div>
+    </div>
+    <span id="activeDesc" style="color:#224466;font-size:9px;letter-spacing:.15em;"></span>
+    <button onclick="deactivateWeapon()" style="background:rgba(80,0,0,.5);border:1px solid rgba(255,50,50,.4);color:#ff6644;font-size:10px;letter-spacing:.15em;padding:3px 14px;border-radius:2px;cursor:pointer;margin-top:2px;">
+      ✕ DEACTIVATE
+    </button>
+  </div>
+
+  <!-- Damage type legend -->
+  <div style="position:absolute;bottom:20px;right:16px;background:rgba(0,8,18,.92);border:1px solid rgba(0,180,255,.18);border-radius:3px;padding:8px 12px;">
+    <div style="color:#224466;font-size:9px;letter-spacing:.2em;margin-bottom:6px;">DAMAGE TYPES</div>
+    ${Object.entries(DTYPE_COLORS).map(([t,c])=>`
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px;">
+        <div style="width:8px;height:3px;background:${c};border-radius:1px;"></div>
+        <span style="color:${c};font-size:9px;letter-spacing:.15em;">${t.toUpperCase()}</span>
+      </div>`).join('')}
+  </div>
+
+  <!-- Scanlines -->
+  <div style="position:absolute;inset:0;pointer-events:none;background-image:repeating-linear-gradient(0deg,rgba(0,0,0,.04) 0px,rgba(0,0,0,.04) 1px,transparent 1px,transparent 3px);z-index:10;"></div>
+  <div style="position:absolute;inset:0;pointer-events:none;background:radial-gradient(ellipse at center,transparent 50%,rgba(0,0,10,.65) 100%);z-index:9;"></div>
+  `;
+
+  // Weapon button click handlers
+  WEAPONS.forEach(w=>{
+    document.getElementById(`wbtn${w.id}`).addEventListener('click',()=>{
+      if(activeWeaponId===w.id){deactivateWeapon();}
+      else{activateWeapon(w.id);}
+    });
+  });
+}
+buildHud();
+
+function updateHud(){
+  WEAPONS.forEach(w=>{
+    const btn=document.getElementById(`wbtn${w.id}`);
+    const nameEl=document.getElementById(`wname${w.id}`);
+    const dot=document.getElementById(`wdot${w.id}`);
+    const isActive=activeWeaponId===w.id;
+    if(isActive){
+      btn.classList.add('active');
+      nameEl.style.color=DTYPE_COLORS[w.type];
+      dot.style.display='block';
+    } else {
+      btn.classList.remove('active');
+      nameEl.style.color='#88ccee';
+      dot.style.display='none';
+    }
+  });
+
+  const bar=document.getElementById('activeBar');
+  if(activeWeaponId!==null){
+    const w=WEAPONS[activeWeaponId];
+    const tc=DTYPE_COLORS[w.type];
+    bar.style.display='flex';
+    bar.style.border=`1px solid ${tc}44`;
+    document.getElementById('activeName').textContent=`${w.name.toUpperCase()} — ACTIVE`;
+    document.getElementById('activeName').style.color=tc;
+    document.getElementById('activeDot').style.background=tc;
+    document.getElementById('activeDot').style.boxShadow=`0 0 8px ${tc}`;
+    document.getElementById('activeDot2').style.background=tc;
+    document.getElementById('activeDot2').style.boxShadow=`0 0 8px ${tc}`;
+    document.getElementById('activeDesc').textContent=w.desc;
+  } else {
+    bar.style.display='none';
+  }
+}
+
+function updateCombatLog(){
+  document.getElementById('totalDmg').textContent=totalDamage.toLocaleString();
+  const container=document.getElementById('logEntries');
+  const entries=combatLog.slice(-12).reverse();
+  container.innerHTML=entries.map((e,i)=>`
+    <div class="log-entry" style="display:flex;justify-content:space-between;opacity:${Math.max(.2,1-i*.07)}">
+      <span style="color:${DTYPE_COLORS[e.type]};font-size:9px;letter-spacing:.1em;">${e.weapon}</span>
+      <span style="color:#ff6644;font-size:9px;">-${e.damage}</span>
+    </div>`).join('');
+}
+
+function updateTargetHud(){
+  const bar    = document.getElementById('targetHpBar');
+  const label  = document.getElementById('targetHpLabel');
+  const status = document.getElementById('targetStatus');
+  if(!bar) return;
+  const pct = Math.max(0, targetHp / TARGET_MAX_HP * 100);
+  bar.style.width = pct + '%';
+  bar.style.background = pct > 60 ? '#00cc44' : pct > 25 ? '#ffaa00' : '#ff2200';
+  label.textContent = targetDestroyed
+    ? `DESTROYED — respawn ${Math.ceil(targetRespawnTimer)}s`
+    : `${Math.ceil(targetHp).toLocaleString()} / ${TARGET_MAX_HP}`;
+  status.textContent = targetDestroyed ? '⚠ DESTROYED' : '● LOCKED';
+  status.style.color  = targetDestroyed ? '#ff4400' : '#00cc44';
+}
+
+const STATE_LABELS = {DOCKED:'DOCKED',LAUNCHING:'LAUNCH',APPROACHING:'APPROACH',ORBITING:'ORBIT',RETURNING:'RETURN'};
+const STATE_COLORS = {DOCKED:'#224466',LAUNCHING:'#ffaa00',APPROACHING:'#ffcc44',ORBITING:'#00cc44',RETURNING:'#ff6633'};
+function updateDronePanel(){
+  const panel = document.getElementById('dronePanel');
+  const states= document.getElementById('droneStates');
+  if(!panel) return;
+  const hasDrones = activeDrones.length > 0;
+  panel.style.display = hasDrones ? 'block' : 'none';
+  if(!hasDrones) return;
+  const w = WEAPONS[activeDrones[0].weaponId];
+  states.innerHTML = activeDrones.map((d,i)=>`
+    <div style="display:flex;justify-content:space-between;align-items:center;">
+      <span style="color:${w.color};font-size:9px;letter-spacing:.1em;">DRONE ${i+1}</span>
+      <span style="color:${STATE_COLORS[d.state]||'#88ccee'};font-size:9px;letter-spacing:.12em;">${STATE_LABELS[d.state]||d.state}</span>
+    </div>`).join('');
+}
+// ═══════════════════════════════════════════════════════════════════════════════
+// RENDER LOOP
+// ═══════════════════════════════════════════════════════════════════════════════
+let last=performance.now();
+
+function loop(){
+  requestAnimationFrame(loop);
+  const now=performance.now();
+  const dt=Math.min((now-last)/1000,.05);
+  last=now;
+
+  // Target respawn countdown
+  if(targetDestroyed){
+    targetRespawnTimer-=dt;
+    if(targetRespawnTimer<=0) respawnTarget();
+    updateTargetHud();
+  }
+
+  // Target rotation (only when alive)
+  if(!targetDestroyed){
+    targetGroup.rotation.y+=dt*.4;
+    targetGroup.rotation.x+=dt*.15;
+  }
+
+  // Hit flash
+  if(hitFlash>0){
+    hitFlash=Math.max(0,hitFlash-dt*4);
+    const f=hitFlash>0;
+    tBodyMat.emissiveIntensity=f?2+hitFlash*3:.3;
+    tBodyMat.emissive.setHex(f?0x442200:0x002244);
+  }
+
+  // Active beam weapons (0, 1) — suppress when target destroyed
+  if((activeWeaponId===0||activeWeaponId===1)&&!targetDestroyed){
+    const w=WEAPONS[activeWeaponId];
+    const from=new THREE.Vector3(shipGroup.position.x+.8,shipGroup.position.y,shipGroup.position.z+2.5);
+    if(!activeBeam){
+      activeBeam=makeBeam(from,TARGET,w.hex,activeWeaponId===0?.06:.12);
+    } else {
+      if(activeWeaponId===1) activeBeam.mat.opacity=.5+.5*Math.sin(now/56);
+    }
+  } else {
+    if(activeBeam){removeBeam(activeBeam);activeBeam=null;}
+  }
+
+  // Weapon ticks
+  tickMissiles(dt);
+  tickSlugs(dt);
+  tickRailStreaks(dt);
+  tickRings(dt);
+  tickExplosions(dt);
+  tickSparks(dt);
+  tickDrones(dt);
+  updateDronePanel();
+
+  // Engine glow
+  engGlow.material.emissiveIntensity=2.5+Math.sin(now/200)*.5;
+
+  applyOrbit();
+  renderer.render(scene,camera);
+}
+loop();
+updateTargetHud();
+</script>
+</body>
+</html>
