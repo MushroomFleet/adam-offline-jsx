@@ -1,0 +1,1242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GLB Socket Editor — Demo</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #06101a;
+      --panel: rgba(6,16,26,0.96);
+      --accent: #0af;
+      --accent2: #0f8;
+      --warn: #ff4;
+      --danger: #f44;
+      --border: rgba(0,175,255,0.18);
+      --text: #ccd;
+      --muted: #445;
+      --mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+    }
+
+    html, body {
+      width: 100%; height: 100%; overflow: hidden;
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--mono);
+    }
+
+    #root { width: 100%; height: 100%; display: flex; flex-direction: column; }
+
+    /* ─ Header ─────────────────────────────────────────── */
+    .header {
+      height: 46px;
+      background: rgba(4, 10, 18, 0.95);
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center;
+      padding: 0 18px; gap: 16px;
+      flex-shrink: 0;
+      backdrop-filter: blur(10px);
+      position: relative;
+      z-index: 10;
+    }
+    .header-logo {
+      font-size: 13px; letter-spacing: 3px;
+      color: var(--accent);
+      display: flex; align-items: center; gap: 8px;
+    }
+    .header-logo svg { flex-shrink: 0; }
+    .header-badge {
+      font-size: 9px; padding: 2px 6px;
+      background: rgba(0,175,255,0.1);
+      border: 1px solid var(--accent);
+      border-radius: 3px; color: var(--accent);
+      letter-spacing: 1px;
+    }
+    .header-sep { flex: 1; }
+    .header-hint {
+      font-size: 10px; color: #334; letter-spacing: 1px;
+    }
+
+    /* ─ Main layout ─────────────────────────────────────── */
+    .main { flex: 1; display: flex; overflow: hidden; }
+
+    /* ─ 3D viewport ─────────────────────────────────────── */
+    #viewport {
+      flex: 1; position: relative; overflow: hidden;
+    }
+    #three-canvas {
+      width: 100%; height: 100%;
+      display: block;
+    }
+
+    /* ─ Toolbar overlay ─────────────────────────────────── */
+    .toolbar {
+      position: absolute; top: 12px; left: 50%;
+      transform: translateX(-50%);
+      display: flex; gap: 5px;
+      background: rgba(6,16,26,0.88);
+      backdrop-filter: blur(8px);
+      border: 1px solid var(--border);
+      border-radius: 8px; padding: 5px 8px;
+      z-index: 5;
+    }
+    .tool-btn {
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 5px; padding: 5px 10px;
+      color: #556; cursor: pointer;
+      font-size: 11px; font-family: var(--mono);
+      transition: all 0.12s;
+      display: flex; align-items: center; gap: 4px;
+    }
+    .tool-btn:hover { color: #aaa; border-color: rgba(255,255,255,0.2); }
+    .tool-btn.active {
+      background: rgba(0,175,255,0.15);
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+    .tool-sep { width: 1px; background: rgba(255,255,255,0.08); margin: 0 2px; }
+    kbd {
+      font-size: 8px; opacity: 0.45;
+      border: 1px solid currentColor;
+      border-radius: 2px; padding: 0 2px;
+    }
+
+    /* ─ Viewport hints ───────────────────────────────────── */
+    .viewport-hints {
+      position: absolute; bottom: 12px; left: 14px;
+      font-size: 9px; color: #223; line-height: 1.8;
+      pointer-events: none;
+    }
+
+    /* ─ Axis overlay ─────────────────────────────────────── */
+    .axis-overlay {
+      position: absolute; bottom: 14px; right: 14px;
+      width: 60px; height: 60px;
+      pointer-events: none;
+    }
+
+    /* ─ Right panel ─────────────────────────────────────── */
+    .panel {
+      width: 262px;
+      display: flex; flex-direction: column;
+      border-left: 1px solid var(--border);
+      background: var(--panel);
+      overflow: hidden;
+    }
+    .panel-section {
+      padding: 11px 15px;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+    }
+    .section-label {
+      font-size: 9px; color: var(--muted);
+      letter-spacing: 2px; margin-bottom: 7px;
+    }
+
+    /* ─ Mesh loader ───────────────────────────────────────── */
+    .load-btn {
+      width: 100%;
+      background: rgba(0,175,255,0.05);
+      border: 1px dashed rgba(0,175,255,0.3);
+      border-radius: 6px; padding: 8px;
+      color: var(--accent); cursor: pointer;
+      font-size: 11px; font-family: var(--mono);
+      transition: all 0.15s;
+      text-align: center;
+    }
+    .load-btn:hover {
+      background: rgba(0,175,255,0.1);
+      border-color: var(--accent);
+    }
+    .mesh-info {
+      font-size: 9px; color: #334;
+      margin-top: 5px; text-align: center;
+    }
+
+    /* ─ Socket list ───────────────────────────────────────── */
+    .sockets-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 15px 8px;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+    }
+    .sockets-header .section-label { margin: 0; }
+    .add-btn {
+      background: rgba(0,175,255,0.12);
+      border: 1px solid rgba(0,175,255,0.35);
+      border-radius: 5px; padding: 3px 8px;
+      color: var(--accent); cursor: pointer;
+      font-size: 10px; font-family: var(--mono);
+      transition: all 0.12s;
+    }
+    .add-btn:hover { background: rgba(0,175,255,0.22); }
+
+    .socket-list {
+      flex: 1; overflow-y: auto;
+      padding: 5px 10px;
+      scrollbar-width: thin;
+      scrollbar-color: #0af2 transparent;
+    }
+    .socket-item {
+      display: flex; align-items: center; gap: 8px;
+      padding: 6px 8px; border-radius: 5px;
+      cursor: pointer; margin-bottom: 2px;
+      border: 1px solid transparent;
+      transition: all 0.12s;
+    }
+    .socket-item:hover { background: rgba(255,255,255,0.03); }
+    .socket-item.selected {
+      border-color: rgba(0,175,255,0.3);
+      background: rgba(0,175,255,0.07);
+    }
+    .socket-dot {
+      width: 9px; height: 9px; border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .socket-name {
+      flex: 1; font-size: 11px; color: #ccc;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .socket-type-tag {
+      font-size: 9px; color: #445;
+    }
+    .del-btn {
+      background: none; border: none; color: #333;
+      cursor: pointer; font-size: 14px; line-height: 1;
+      padding: 0 2px; transition: color 0.12s;
+    }
+    .del-btn:hover { color: #f44; }
+    .socket-empty {
+      text-align: center; color: #223;
+      font-size: 11px; padding: 22px 0;
+      line-height: 1.9;
+    }
+
+    /* ─ Inspector ─────────────────────────────────────────── */
+    .inspector {
+      border-top: 1px solid var(--border);
+      padding: 10px 14px;
+    }
+    .inspector-label {
+      font-size: 9px; color: var(--accent);
+      letter-spacing: 2px; margin-bottom: 8px;
+    }
+    .rename-input {
+      width: 100%; background: rgba(0,0,0,0.35);
+      border: 1px solid rgba(0,175,255,0.2);
+      border-radius: 4px; padding: 5px 8px;
+      color: #bbb; font-size: 11px; font-family: var(--mono);
+      margin-bottom: 8px; outline: none;
+      transition: border-color 0.12s;
+    }
+    .rename-input:focus { border-color: var(--accent); }
+    .vec-row {
+      display: flex; gap: 5px; align-items: center; margin-bottom: 4px;
+    }
+    .vec-axis {
+      font-size: 9px; color: #444; width: 12px;
+    }
+    .vec-val {
+      flex: 1; background: rgba(0,0,0,0.3);
+      border-radius: 3px; padding: 3px 6px;
+      font-family: var(--mono); font-size: 10px;
+      text-align: right;
+    }
+    .vec-x { color: #f76; }
+    .vec-y { color: #7f6; }
+    .vec-z { color: #67f; }
+    .mirror-row {
+      display: flex; align-items: center; gap: 6px;
+      font-size: 10px; color: #445; cursor: pointer;
+      margin-top: 8px; user-select: none;
+    }
+    .mirror-row input { accent-color: var(--accent); cursor: pointer; }
+
+    /* ─ Export ────────────────────────────────────────────── */
+    .export-section {
+      padding: 10px 14px;
+      border-top: 1px solid rgba(255,255,255,0.04);
+    }
+    .export-btn {
+      width: 100%; padding: 8px;
+      background: rgba(0,175,255,0.1);
+      border: 1px solid var(--accent);
+      border-radius: 6px;
+      color: var(--accent); cursor: pointer;
+      font-family: var(--mono); font-size: 12px;
+      letter-spacing: 1px;
+      transition: all 0.2s;
+    }
+    .export-btn:hover { background: rgba(0,175,255,0.2); }
+    .export-btn.success {
+      background: rgba(0,255,128,0.15);
+      border-color: var(--accent2);
+      color: var(--accent2);
+    }
+    .export-meta {
+      font-size: 9px; color: #223;
+      margin-top: 4px; text-align: center;
+    }
+
+    /* ─ Modal dialog ──────────────────────────────────────── */
+    .modal-overlay {
+      position: absolute; inset: 0;
+      background: rgba(0,0,0,0.72);
+      display: flex; align-items: center; justify-content: center;
+      z-index: 50;
+      backdrop-filter: blur(5px);
+    }
+    .modal {
+      background: #0b1827;
+      border: 1px solid rgba(0,175,255,0.3);
+      border-radius: 11px; padding: 22px;
+      width: 300px;
+      box-shadow: 0 0 50px rgba(0,175,255,0.12);
+    }
+    .modal-title {
+      font-size: 12px; color: var(--accent);
+      letter-spacing: 2px; margin-bottom: 16px;
+    }
+    .form-label {
+      font-size: 10px; color: #556; display: block;
+      margin-bottom: 5px; letter-spacing: 1px;
+    }
+    .form-input {
+      width: 100%;
+      background: rgba(0,0,0,0.4);
+      border: 1px solid rgba(0,175,255,0.25);
+      border-radius: 5px; padding: 7px 10px;
+      color: #ccc; font-size: 11px; font-family: var(--mono);
+      margin-bottom: 14px; outline: none;
+      transition: border-color 0.12s;
+    }
+    .form-input:focus { border-color: var(--accent); }
+    .type-grid {
+      display: grid; grid-template-columns: 1fr 1fr;
+      gap: 5px; margin-bottom: 14px;
+    }
+    .type-btn {
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 5px; padding: 6px 7px;
+      color: #445; cursor: pointer;
+      font-size: 10px; font-family: var(--mono);
+      text-align: left; display: flex;
+      align-items: center; gap: 5px;
+      transition: all 0.12s;
+    }
+    .type-btn.active {
+      border-color: currentColor;
+      background: color-mix(in srgb, currentColor 12%, transparent);
+    }
+    .mirror-check {
+      display: flex; align-items: center; gap: 7px;
+      font-size: 10px; color: #556; cursor: pointer;
+      margin-bottom: 16px; user-select: none;
+    }
+    .mirror-check input { accent-color: var(--accent); cursor: pointer; }
+    .btn-row { display: flex; gap: 7px; }
+    .btn-cancel, .btn-create {
+      flex: 1; padding: 8px;
+      border-radius: 6px; cursor: pointer;
+      font-family: var(--mono); font-size: 11px;
+      transition: all 0.12s;
+    }
+    .btn-cancel {
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.08);
+      color: #445;
+    }
+    .btn-cancel:hover { color: #888; }
+    .btn-create {
+      background: rgba(0,175,255,0.15);
+      border: 1px solid rgba(0,175,255,0.4);
+      color: var(--accent);
+    }
+    .btn-create:hover { background: rgba(0,175,255,0.25); }
+    .btn-create:disabled {
+      background: rgba(0,0,0,0.15);
+      border-color: rgba(255,255,255,0.05);
+      color: #222; cursor: not-allowed;
+    }
+
+    /* ─ JSON preview panel ───────────────────────────────── */
+    .json-panel {
+      position: absolute; bottom: 14px; right: 14px;
+      width: 280px; max-height: 200px;
+      background: rgba(4,10,18,0.92);
+      border: 1px solid rgba(0,175,255,0.15);
+      border-radius: 7px;
+      overflow: hidden;
+      display: flex; flex-direction: column;
+      opacity: 0; pointer-events: none;
+      transform: translateY(8px);
+      transition: all 0.25s;
+      z-index: 6;
+    }
+    .json-panel.visible {
+      opacity: 1; pointer-events: all;
+      transform: translateY(0);
+    }
+    .json-header {
+      padding: 6px 10px;
+      border-bottom: 1px solid rgba(0,175,255,0.1);
+      font-size: 9px; color: var(--accent);
+      letter-spacing: 2px;
+      display: flex; justify-content: space-between;
+      align-items: center;
+    }
+    .json-close {
+      background: none; border: none; color: #445;
+      cursor: pointer; font-size: 14px; line-height: 1;
+    }
+    pre.json-pre {
+      flex: 1; overflow: auto;
+      padding: 8px 10px;
+      font-size: 9px; line-height: 1.6;
+      color: #678; margin: 0;
+      scrollbar-width: thin;
+      scrollbar-color: #0af2 transparent;
+    }
+    .json-key { color: #79b; }
+    .json-str { color: #7d9; }
+    .json-num { color: #f90; }
+    .json-bool { color: #f44; }
+
+    /* ─ Loading spinner ──────────────────────────────────── */
+    .loading-overlay {
+      position: absolute; inset: 0;
+      display: flex; align-items: center; justify-content: center;
+      background: rgba(6,16,26,0.7);
+      z-index: 20;
+      backdrop-filter: blur(2px);
+      transition: opacity 0.3s;
+    }
+    .spinner {
+      width: 36px; height: 36px;
+      border: 2px solid rgba(0,175,255,0.2);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ─ Toast ────────────────────────────────────────────── */
+    .toast {
+      position: absolute; bottom: 60px; left: 50%;
+      transform: translateX(-50%) translateY(10px);
+      background: rgba(0,255,128,0.15);
+      border: 1px solid var(--accent2);
+      border-radius: 6px; padding: 6px 14px;
+      font-size: 10px; color: var(--accent2);
+      letter-spacing: 1px;
+      opacity: 0; pointer-events: none;
+      transition: all 0.3s;
+      white-space: nowrap;
+      z-index: 8;
+    }
+    .toast.visible {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+  </style>
+</head>
+<body>
+<div id="root">
+  <!-- Header -->
+  <header class="header">
+    <div class="header-logo">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+        <path d="M12 2L2 7l10 5 10-5-10-5z" stroke="#0af" stroke-width="1.5" stroke-linejoin="round"/>
+        <path d="M2 17l10 5 10-5" stroke="#0af" stroke-width="1.5" stroke-linejoin="round"/>
+        <path d="M2 12l10 5 10-5" stroke="#0af4" stroke-width="1" stroke-linejoin="round" stroke-dasharray="2 2"/>
+      </svg>
+      GLB SOCKET EDITOR
+    </div>
+    <span class="header-badge">v1.0</span>
+    <div class="header-sep"></div>
+    <div class="header-hint">spaceship mesh · socket blueprint tool</div>
+  </header>
+
+  <!-- Main -->
+  <div class="main">
+    <!-- Viewport -->
+    <div id="viewport">
+      <canvas id="three-canvas"></canvas>
+
+      <!-- Toolbar -->
+      <div class="toolbar">
+        <button class="tool-btn active" id="btn-move" onclick="setMode('translate')">
+          ↔ Move <kbd>G</kbd>
+        </button>
+        <button class="tool-btn" id="btn-rotate" onclick="setMode('rotate')">
+          ↻ Rotate <kbd>R</kbd>
+        </button>
+        <button class="tool-btn" id="btn-scale" onclick="setMode('scale')">
+          ⊡ Scale <kbd>S</kbd>
+        </button>
+        <div class="tool-sep"></div>
+        <button class="tool-btn" id="btn-wire" onclick="toggleWireframe()">
+          ⬡ Wire
+        </button>
+        <button class="tool-btn active" id="btn-mirror" onclick="toggleMirrors()">
+          ⟺ Mirror
+        </button>
+        <button class="tool-btn" id="btn-snap" onclick="toggleSnap()" title="Toggle grid snap">
+          ◎ Snap
+        </button>
+      </div>
+
+      <div class="viewport-hints">
+        <div>Click socket to select · Drag gizmo to position</div>
+        <div>G/R/S — mode · ESC — deselect · DEL — delete selected</div>
+        <div>Middle-drag — orbit · Scroll — zoom · Right-drag — pan</div>
+      </div>
+
+      <div class="toast" id="toast"></div>
+    </div>
+
+    <!-- Right panel -->
+    <aside class="panel">
+      <!-- Mesh -->
+      <div class="panel-section">
+        <div class="section-label">MESH</div>
+        <button class="load-btn" onclick="document.getElementById('glb-input').click()">
+          📁 Load GLB / GLTF…
+        </button>
+        <input type="file" id="glb-input" accept=".glb,.gltf" style="display:none" onchange="loadGLB(event)" />
+        <div class="mesh-info" id="mesh-info">Using default ship placeholder</div>
+      </div>
+
+      <!-- Sockets -->
+      <div class="sockets-header">
+        <div class="section-label" id="socket-count">SOCKETS (0)</div>
+        <button class="add-btn" onclick="openDialog()">+ Add</button>
+      </div>
+
+      <div class="socket-list" id="socket-list">
+        <div class="socket-empty" id="socket-empty">
+          No sockets yet.<br>
+          <span style="color:#0af4;font-size:9px">Click "+ Add" to create one</span>
+        </div>
+      </div>
+
+      <!-- Inspector (hidden until socket selected) -->
+      <div class="inspector" id="inspector" style="display:none">
+        <div class="inspector-label">INSPECTOR</div>
+        <input class="rename-input" id="rename-input" placeholder="socket name"
+          oninput="renameSocket(this.value)" />
+        <div id="pos-display"></div>
+        <label class="mirror-row">
+          <input type="checkbox" id="mirror-check" onchange="toggleSocketMirror()" />
+          X-axis mirror
+        </label>
+        <div id="mirror-pos-display" style="margin-top:4px"></div>
+      </div>
+
+      <!-- Export -->
+      <div class="export-section">
+        <button class="export-btn" id="export-btn" onclick="exportJSON()">
+          ↓ EXPORT JSON
+        </button>
+        <div class="export-meta" id="export-meta">0 sockets · socket-config.json</div>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<!-- Dialog -->
+<div class="modal-overlay" id="dialog-overlay" style="display:none" onclick="closeDialogOnBg(event)">
+  <div class="modal">
+    <div class="modal-title">NEW SOCKET</div>
+    <label class="form-label">NAME</label>
+    <input class="form-input" id="dialog-name" placeholder="e.g. left_cannon, main_exhaust"
+      oninput="validateDialog()" onkeydown="dialogKey(event)" />
+    <label class="form-label">TYPE</label>
+    <div class="type-grid" id="type-grid"></div>
+    <label class="mirror-check">
+      <input type="checkbox" id="dialog-mirror" />
+      Mirror on X axis (symmetric emitters)
+    </label>
+    <div class="btn-row">
+      <button class="btn-cancel" onclick="closeDialog()">Cancel</button>
+      <button class="btn-create" id="dialog-create" onclick="confirmAddSocket()" disabled>
+        Create Socket
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- Three.js via CDN -->
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.module.js"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+
+// ─── Globals ──────────────────────────────────────────────────────────────────
+let scene, camera, renderer, orbitCamera;
+let shipGroup = null;
+let sockets = [];
+let selectedId = null;
+let transformMode = 'translate';
+let showWireframe = false;
+let showMirrors = true;
+let snapEnabled = false;
+let snapSize = 0.1;
+let animId = null;
+const socketMeshes = new Map(); // id -> { sphere, label }
+const socketMirrorMeshes = new Map();
+
+// Gizmo state
+let dragging = false;
+let dragAxis = null; // 'x','y','z'
+let dragStart = null;
+let dragSocketStart = null;
+let gizmoGroup = null;
+let axisArrows = {};
+
+const SOCKET_TYPES = [
+  { id:'weapon', label:'Weapon Origin',   color:'#ff4444', icon:'⚡' },
+  { id:'engine', label:'Engine Exhaust',  color:'ff8c00',  icon:'🔥', hex: 0xff8c00 },
+  { id:'thruster',label:'Thruster',       color:'#00cfff', icon:'💨' },
+  { id:'shield', label:'Shield Emitter',  color:'#44aaff', icon:'🛡' },
+  { id:'fx',     label:'FX Emitter',      color:'#aa44ff', icon:'✨' },
+  { id:'custom', label:'Custom',          color:'#aaaaaa', icon:'📌' },
+];
+const TYPE_MAP = Object.fromEntries(SOCKET_TYPES.map(t=>[t.id,t]));
+const COLOR_MAP = {
+  weapon: 0xff4444, engine: 0xff8c00, thruster: 0x00cfff,
+  shield: 0x44aaff, fx: 0xaa44ff, custom: 0xaaaaaa,
+};
+
+function typeColor(type) { return COLOR_MAP[type] ?? 0xaaaaaa; }
+function typeHex(type) { return '#' + typeColor(type).toString(16).padStart(6,'0'); }
+
+function genId() { return Math.random().toString(36).slice(2,9); }
+
+// ─── THREE setup ──────────────────────────────────────────────────────────────
+const canvas = document.getElementById('three-canvas');
+renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+scene = new THREE.Scene();
+scene.background = null;
+
+// Gradient background via CSS on canvas's parent already set
+
+camera = new THREE.PerspectiveCamera(50, 1, 0.01, 200);
+camera.position.set(0, 2, 5);
+camera.lookAt(0, 0, 0);
+
+// ─── Lighting ─────────────────────────────────────────────────────────────────
+scene.add(new THREE.AmbientLight(0xffffff, 0.45));
+const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
+dirLight.position.set(5, 8, 5);
+dirLight.castShadow = true;
+scene.add(dirLight);
+const fillLight = new THREE.DirectionalLight(0x4488ff, 0.3);
+fillLight.position.set(-5,-2,-5);
+scene.add(fillLight);
+const topLight = new THREE.PointLight(0xffffff, 0.5, 20);
+topLight.position.set(0,4,0);
+scene.add(topLight);
+
+// ─── Grid ────────────────────────────────────────────────────────────────────
+function buildGrid() {
+  const size = 20, divisions = 40;
+  const majorGrid = new THREE.GridHelper(size, divisions/2, 0x0af0ff, 0x112233);
+  majorGrid.position.y = -2;
+  scene.add(majorGrid);
+}
+buildGrid();
+
+// ─── Default Ship ─────────────────────────────────────────────────────────────
+function buildDefaultShip() {
+  const g = new THREE.Group();
+  const matHull = new THREE.MeshStandardMaterial({ color:0x1a2a3a, metalness:0.85, roughness:0.25 });
+  const matCockpit = new THREE.MeshStandardMaterial({ color:0x00aaff, metalness:0.3, roughness:0.1, transparent:true, opacity:0.7 });
+  const matWing = new THREE.MeshStandardMaterial({ color:0x0f1e2d, metalness:0.9, roughness:0.2 });
+  const matNozzle = new THREE.MeshStandardMaterial({ color:0x0d0d0d, metalness:1.0, roughness:0.1 });
+
+  // Hull
+  const hull = new THREE.Mesh(new THREE.CylinderGeometry(0.18,0.45,2.2,8), matHull);
+  hull.castShadow = true;
+  g.add(hull);
+
+  // Cockpit dome
+  const dome = new THREE.Mesh(new THREE.SphereGeometry(0.22,12,12,0,Math.PI*2,0,Math.PI/2), matCockpit);
+  dome.position.y = 1.1;
+  g.add(dome);
+
+  // Wings
+  const wingGeo = new THREE.BoxGeometry(1.1,0.07,0.7);
+  [-1,1].forEach(side => {
+    const w = new THREE.Mesh(wingGeo, matWing);
+    w.position.set(side*0.9,-0.3,0);
+    w.rotation.z = -side*0.3;
+    w.castShadow = true;
+    g.add(w);
+  });
+
+  // Engine nozzle
+  const nozzle = new THREE.Mesh(new THREE.CylinderGeometry(0.28,0.18,0.35,10), matNozzle);
+  nozzle.position.y = -1.25;
+  g.add(nozzle);
+
+  return g;
+}
+
+shipGroup = buildDefaultShip();
+scene.add(shipGroup);
+
+// ─── Orbit controls (manual) ─────────────────────────────────────────────────
+let orbit = { theta: 0.4, phi: 1.2, radius: 5, target: new THREE.Vector3(0,0,0) };
+let orbiting = false, panning = false, orbitStart = null, orbitStartState = null;
+
+function updateCamera() {
+  camera.position.x = orbit.target.x + orbit.radius * Math.sin(orbit.phi) * Math.sin(orbit.theta);
+  camera.position.y = orbit.target.y + orbit.radius * Math.cos(orbit.phi);
+  camera.position.z = orbit.target.z + orbit.radius * Math.sin(orbit.phi) * Math.cos(orbit.theta);
+  camera.lookAt(orbit.target);
+}
+updateCamera();
+
+canvas.addEventListener('mousedown', e => {
+  if (e.button === 1 || (e.button === 0 && e.altKey)) {
+    orbiting = true; orbitStart = {x:e.clientX,y:e.clientY};
+    orbitStartState = {theta:orbit.theta, phi:orbit.phi};
+    e.preventDefault();
+  }
+  if (e.button === 2) {
+    panning = true; orbitStart = {x:e.clientX,y:e.clientY};
+    orbitStartState = {tx:orbit.target.x, ty:orbit.target.y};
+  }
+});
+window.addEventListener('mousemove', e => {
+  if (orbiting) {
+    const dx = (e.clientX - orbitStart.x) * 0.007;
+    const dy = (e.clientY - orbitStart.y) * 0.007;
+    orbit.theta = orbitStartState.theta - dx;
+    orbit.phi   = Math.max(0.1, Math.min(Math.PI-0.1, orbitStartState.phi + dy));
+    updateCamera();
+  }
+  if (panning) {
+    const dx = (e.clientX - orbitStart.x) * 0.003 * orbit.radius * 0.2;
+    const dy = (e.clientY - orbitStart.y) * 0.003 * orbit.radius * 0.2;
+    orbit.target.x = orbitStartState.tx - dx;
+    orbit.target.y = orbitStartState.ty + dy;
+    updateCamera();
+  }
+});
+window.addEventListener('mouseup', () => { orbiting = false; panning = false; });
+canvas.addEventListener('wheel', e => {
+  orbit.radius = Math.max(0.5, Math.min(30, orbit.radius * (1 + e.deltaY * 0.001)));
+  updateCamera(); e.preventDefault();
+}, { passive:false });
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+// ─── Resize ────────────────────────────────────────────────────────────────────
+function resize() {
+  const vp = document.getElementById('viewport');
+  const w = vp.clientWidth, h = vp.clientHeight;
+  renderer.setSize(w, h);
+  camera.aspect = w/h;
+  camera.updateProjectionMatrix();
+}
+new ResizeObserver(resize).observe(document.getElementById('viewport'));
+resize();
+
+// ─── Raycaster ────────────────────────────────────────────────────────────────
+const raycaster = new THREE.Raycaster();
+const mouse2D = new THREE.Vector2();
+
+function getNDC(e) {
+  const rect = canvas.getBoundingClientRect();
+  return new THREE.Vector2(
+    ((e.clientX - rect.left) / rect.width)  * 2 - 1,
+   -((e.clientY - rect.top)  / rect.height) * 2 + 1,
+  );
+}
+
+canvas.addEventListener('click', e => {
+  if (orbiting || dragging) return;
+  const ndc = getNDC(e);
+  raycaster.setFromCamera(ndc, camera);
+  const spheres = [];
+  socketMeshes.forEach((obj, id) => spheres.push({ mesh: obj.sphere, id }));
+  const hits = raycaster.intersectObjects(spheres.map(s=>s.mesh));
+  if (hits.length > 0) {
+    const hit = hits[0].object;
+    const entry = spheres.find(s=>s.mesh === hit);
+    if (entry) { selectSocket(entry.id); return; }
+  }
+  // deselect if clicking empty
+  // selectSocket(null);  // commented: allow accidental deselect? keep as-is
+});
+
+// ─── Gizmo (translate arrows) ────────────────────────────────────────────────
+gizmoGroup = new THREE.Group();
+scene.add(gizmoGroup);
+
+function buildArrow(color, direction) {
+  const g = new THREE.Group();
+  // shaft
+  const shaft = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.025, 0.025, 0.55, 8),
+    new THREE.MeshBasicMaterial({ color, depthTest: false })
+  );
+  shaft.renderOrder = 999;
+  // tip
+  const tip = new THREE.Mesh(
+    new THREE.ConeGeometry(0.07, 0.18, 8),
+    new THREE.MeshBasicMaterial({ color, depthTest: false })
+  );
+  tip.position.y = 0.37;
+  tip.renderOrder = 999;
+  g.add(shaft, tip);
+
+  // orient
+  if (direction === 'x') g.rotation.z = -Math.PI/2;
+  if (direction === 'z') g.rotation.x =  Math.PI/2;
+
+  // invisible hit area
+  const hit = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.08, 0.08, 0.7, 8),
+    new THREE.MeshBasicMaterial({ transparent:true, opacity:0, depthTest:false })
+  );
+  hit.renderOrder = 999;
+  if (direction === 'x') hit.rotation.z = -Math.PI/2;
+  if (direction === 'z') hit.rotation.x =  Math.PI/2;
+  hit.userData.axis = direction;
+
+  return { visual: g, hitArea: hit };
+}
+
+const arrowX = buildArrow(0xff4444, 'x');
+const arrowY = buildArrow(0x44ff44, 'y');
+const arrowZ = buildArrow(0x4477ff, 'z');
+[arrowX, arrowY, arrowZ].forEach(a => {
+  gizmoGroup.add(a.visual);
+  gizmoGroup.add(a.hitArea);
+});
+gizmoGroup.visible = false;
+axisArrows = { x: arrowX.hitArea, y: arrowY.hitArea, z: arrowZ.hitArea };
+
+// Gizmo drag
+let gizmoDragActive = false;
+let gizmoDragAxis = null;
+let gizmoDragStartMouse = null;
+let gizmoDragStartPos = null;
+let gizmoDragCamRight = null;
+let gizmoDragCamUp = null;
+
+canvas.addEventListener('mousedown', e => {
+  if (e.button !== 0 || !selectedId || e.altKey) return;
+  const ndc = getNDC(e);
+  raycaster.setFromCamera(ndc, camera);
+  const hitAreas = Object.values(axisArrows);
+  const hits = raycaster.intersectObjects(hitAreas);
+  if (hits.length > 0) {
+    gizmoDragActive = true;
+    gizmoDragAxis = hits[0].object.userData.axis;
+    gizmoDragStartMouse = { x: e.clientX, y: e.clientY };
+    const s = sockets.find(s=>s.id===selectedId);
+    gizmoDragStartPos = { ...s.position };
+    // Camera right and up in world space
+    const right = new THREE.Vector3(); right.setFromMatrixColumn(camera.matrixWorld, 0);
+    const up    = new THREE.Vector3(); up.setFromMatrixColumn(camera.matrixWorld, 1);
+    gizmoDragCamRight = right;
+    gizmoDragCamUp    = up;
+    e.stopPropagation();
+  }
+});
+window.addEventListener('mousemove', e => {
+  if (!gizmoDragActive || !selectedId) return;
+  const dx = e.clientX - gizmoDragStartMouse.x;
+  const dy = e.clientY - gizmoDragStartMouse.y;
+  const scale = orbit.radius * 0.003;
+
+  const axisVec = { x: new THREE.Vector3(1,0,0), y: new THREE.Vector3(0,1,0), z: new THREE.Vector3(0,0,1) }[gizmoDragAxis];
+  // Project screen delta onto axis
+  const screenX = axisVec.dot(gizmoDragCamRight);
+  const screenY = axisVec.dot(gizmoDragCamUp);
+  let delta = dx * screenX * scale + (-dy) * screenY * scale;
+  if (snapEnabled) delta = Math.round(delta / snapSize) * snapSize;
+
+  const newPos = { ...gizmoDragStartPos };
+  newPos[gizmoDragAxis] += delta;
+  moveSocket(selectedId, newPos);
+  e.preventDefault();
+});
+window.addEventListener('mouseup', () => { gizmoDragActive = false; });
+
+// ─── Socket mesh management ───────────────────────────────────────────────────
+function createSocketMesh(socket) {
+  const color = typeColor(socket.type);
+  const geo = new THREE.SphereGeometry(0.065, 12, 12);
+  const mat = new THREE.MeshStandardMaterial({
+    color, emissive: color, emissiveIntensity: 0.35,
+    transparent: true, opacity: 0.92,
+  });
+  const sphere = new THREE.Mesh(geo, mat);
+  sphere.position.set(socket.position.x, socket.position.y, socket.position.z);
+  sphere.userData.socketId = socket.id;
+
+  // Axis lines
+  const pts = new Float32Array([-0.15,0,0, 0.15,0,0, 0,-0.15,0, 0,0.15,0, 0,0,-0.15, 0,0,0.15]);
+  const lineGeo = new THREE.BufferGeometry();
+  lineGeo.setAttribute('position', new THREE.BufferAttribute(pts, 3));
+  const lineMat = new THREE.LineBasicMaterial({ color, transparent:true, opacity:0.55 });
+  const lines = new THREE.LineSegments(lineGeo, lineMat);
+  sphere.add(lines);
+
+  scene.add(sphere);
+  socketMeshes.set(socket.id, { sphere, mat });
+
+  // Mirror ghost
+  if (socket.mirror) {
+    createMirrorMesh(socket);
+  }
+}
+
+function createMirrorMesh(socket) {
+  const color = typeColor(socket.type);
+  const geo = new THREE.SphereGeometry(0.065, 12, 12);
+  const mat = new THREE.MeshStandardMaterial({
+    color, emissive: color, emissiveIntensity: 0.06,
+    transparent: true, opacity: 0.28, wireframe: true,
+  });
+  const sphere = new THREE.Mesh(geo, mat);
+  sphere.position.set(-socket.position.x, socket.position.y, socket.position.z);
+  scene.add(sphere);
+  socketMirrorMeshes.set(socket.id, sphere);
+}
+
+function removeSocketMesh(id) {
+  const obj = socketMeshes.get(id);
+  if (obj) { scene.remove(obj.sphere); obj.sphere.geometry.dispose(); socketMeshes.delete(id); }
+  const m = socketMirrorMeshes.get(id);
+  if (m) { scene.remove(m); m.geometry.dispose(); socketMirrorMeshes.delete(id); }
+}
+
+function syncSocketMeshes() {
+  // remove stale
+  socketMeshes.forEach((_, id) => { if (!sockets.find(s=>s.id===id)) removeSocketMesh(id); });
+  // add/update
+  sockets.forEach(s => {
+    if (!socketMeshes.has(s.id)) {
+      createSocketMesh(s);
+    } else {
+      const { sphere, mat } = socketMeshes.get(s.id);
+      sphere.position.set(s.position.x, s.position.y, s.position.z);
+      const c = typeColor(s.type);
+      mat.color.set(c); mat.emissive.set(c);
+      mat.emissiveIntensity = (s.id === selectedId) ? 0.8 : 0.35;
+
+      // mirror
+      if (s.mirror) {
+        if (!socketMirrorMeshes.has(s.id)) {
+          createMirrorMesh(s);
+        } else {
+          const m = socketMirrorMeshes.get(s.id);
+          m.position.set(-s.position.x, s.position.y, s.position.z);
+          m.visible = showMirrors;
+        }
+      } else {
+        if (socketMirrorMeshes.has(s.id)) {
+          const m = socketMirrorMeshes.get(s.id);
+          scene.remove(m); socketMirrorMeshes.delete(s.id);
+        }
+      }
+    }
+  });
+  // gizmo position
+  if (selectedId) {
+    const s = sockets.find(x=>x.id===selectedId);
+    if (s) {
+      gizmoGroup.position.set(s.position.x, s.position.y, s.position.z);
+      gizmoGroup.visible = true;
+    }
+  } else {
+    gizmoGroup.visible = false;
+  }
+}
+
+// ─── Render loop ──────────────────────────────────────────────────────────────
+let t = 0;
+renderer.setAnimationLoop(() => {
+  t += 0.016;
+  // Pulse selected socket
+  if (selectedId) {
+    const obj = socketMeshes.get(selectedId);
+    if (obj) obj.mat.emissiveIntensity = 0.55 + Math.sin(t*4)*0.35;
+  }
+  syncSocketMeshes();
+  renderer.render(scene, camera);
+});
+
+// ─── Socket logic ──────────────────────────────────────────────────────────────
+function moveSocket(id, pos) {
+  sockets = sockets.map(s => s.id===id ? {...s, position: pos} : s);
+  if (selectedId === id) updateInspector();
+}
+
+function selectSocket(id) {
+  selectedId = id;
+  renderSocketList();
+  updateInspector();
+}
+
+function updateInspector() {
+  const insp = document.getElementById('inspector');
+  const s = sockets.find(x=>x.id===selectedId);
+  if (!s) { insp.style.display='none'; return; }
+  insp.style.display='block';
+  document.getElementById('rename-input').value = s.name;
+  document.getElementById('mirror-check').checked = s.mirror;
+  renderPosDisplay(s);
+}
+
+function renderPosDisplay(s) {
+  const pd = document.getElementById('pos-display');
+  pd.innerHTML = vecRow('P', s.position);
+  const mpd = document.getElementById('mirror-pos-display');
+  if (s.mirror) {
+    mpd.innerHTML = vecRow('M', {x:-s.position.x, y:s.position.y, z:s.position.z});
+  } else {
+    mpd.innerHTML = '';
+  }
+}
+
+function vecRow(label, v) {
+  return `<div class="vec-row">
+    <span class="vec-axis">${label}</span>
+    <span class="vec-val vec-x">${v.x.toFixed(3)}</span>
+    <span class="vec-val vec-y">${v.y.toFixed(3)}</span>
+    <span class="vec-val vec-z">${v.z.toFixed(3)}</span>
+  </div>`;
+}
+
+function renderSocketList() {
+  const list = document.getElementById('socket-list');
+  const empty = document.getElementById('socket-empty');
+  const countEl = document.getElementById('socket-count');
+  countEl.textContent = `SOCKETS (${sockets.length})`;
+  document.getElementById('export-meta').textContent = `${sockets.length} socket${sockets.length!==1?'s':''} · socket-config.json`;
+
+  if (sockets.length === 0) { empty.style.display='block'; list.innerHTML=''; list.appendChild(empty); return; }
+  empty.style.display = 'none';
+  list.innerHTML = sockets.map(s => {
+    const hex = typeHex(s.type);
+    return `<div class="socket-item ${s.id===selectedId?'selected':''}" 
+      onclick="selectSocket('${s.id}')" 
+      style="${s.id===selectedId?`border-color:${hex}44;background:${hex}11`:''}"
+    >
+      <div class="socket-dot" style="background:${hex};box-shadow:0 0 5px ${hex}"></div>
+      <div>
+        <div class="socket-name">${s.name}</div>
+        <div class="socket-type-tag">${s.type}${s.mirror?' · mirror':''}</div>
+      </div>
+      <button class="del-btn" onclick="event.stopPropagation();deleteSocket('${s.id}')">×</button>
+    </div>`;
+  }).join('');
+}
+
+// ─── Exposed globals ──────────────────────────────────────────────────────────
+window.selectSocket = selectSocket;
+window.deleteSocket = function(id) {
+  sockets = sockets.filter(s=>s.id!==id);
+  removeSocketMesh(id);
+  if (selectedId===id) selectedId=null;
+  renderSocketList(); updateInspector();
+};
+window.renameSocket = function(val) {
+  sockets = sockets.map(s=>s.id===selectedId?{...s,name:val}:s);
+  renderSocketList();
+};
+window.toggleSocketMirror = function() {
+  const checked = document.getElementById('mirror-check').checked;
+  sockets = sockets.map(s=>s.id===selectedId?{...s,mirror:checked}:s);
+  renderSocketList(); updateInspector();
+};
+
+// ─── Toolbar controls ─────────────────────────────────────────────────────────
+window.setMode = function(mode) {
+  transformMode = mode;
+  ['move','rotate','scale'].forEach(m => {
+    document.getElementById('btn-'+m).classList.toggle('active', false);
+  });
+  const modeMap = {translate:'move',rotate:'rotate',scale:'scale'};
+  document.getElementById('btn-'+modeMap[mode]).classList.add('active');
+};
+window.toggleWireframe = function() {
+  showWireframe = !showWireframe;
+  document.getElementById('btn-wire').classList.toggle('active', showWireframe);
+  if (shipGroup) {
+    shipGroup.traverse(child => {
+      if (child.isMesh) child.material.wireframe = showWireframe;
+    });
+  }
+};
+window.toggleMirrors = function() {
+  showMirrors = !showMirrors;
+  document.getElementById('btn-mirror').classList.toggle('active', showMirrors);
+  socketMirrorMeshes.forEach(m => m.visible = showMirrors);
+};
+window.toggleSnap = function() {
+  snapEnabled = !snapEnabled;
+  document.getElementById('btn-snap').classList.toggle('active', snapEnabled);
+  toast(snapEnabled ? 'Grid snap ON (0.1)' : 'Grid snap OFF');
+};
+
+// ─── GLB loading ──────────────────────────────────────────────────────────────
+window.loadGLB = async function(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const url = URL.createObjectURL(file);
+  // Dynamic import GLTFLoader
+  const { GLTFLoader } = await import('https://cdn.jsdelivr.net/npm/three@0.128.0/examples/jsm/loaders/GLTFLoader.js');
+  const loader = new GLTFLoader();
+  loader.load(url, gltf => {
+    if (shipGroup) scene.remove(shipGroup);
+    shipGroup = gltf.scene;
+    shipGroup.traverse(child => {
+      if (child.isMesh) {
+        child.castShadow = true;
+        child.receiveShadow = true;
+      }
+    });
+    scene.add(shipGroup);
+    document.getElementById('mesh-info').textContent = `📦 ${file.name}`;
+    toast('GLB loaded: ' + file.name);
+  });
+};
+
+// ─── Dialog ───────────────────────────────────────────────────────────────────
+let dialogSelectedType = 'weapon';
+
+(function buildTypeGrid() {
+  const grid = document.getElementById('type-grid');
+  SOCKET_TYPES.forEach(t => {
+    const btn = document.createElement('button');
+    btn.className = 'type-btn' + (t.id==='weapon' ? ' active' : '');
+    btn.style.color = t.color;
+    btn.innerHTML = `<span>${t.icon}</span><span>${t.label}</span>`;
+    btn.onclick = () => {
+      dialogSelectedType = t.id;
+      document.querySelectorAll('.type-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+    };
+    grid.appendChild(btn);
+  });
+})();
+
+window.openDialog = function() {
+  document.getElementById('dialog-overlay').style.display='flex';
+  document.getElementById('dialog-name').value='';
+  document.getElementById('dialog-mirror').checked=false;
+  document.getElementById('dialog-create').disabled=true;
+  dialogSelectedType='weapon';
+  document.querySelectorAll('.type-btn').forEach((b,i) => b.classList.toggle('active', i===0));
+  setTimeout(()=>document.getElementById('dialog-name').focus(),50);
+};
+window.closeDialog = function() {
+  document.getElementById('dialog-overlay').style.display='none';
+};
+window.closeDialogOnBg = function(e) {
+  if (e.target===document.getElementById('dialog-overlay')) closeDialog();
+};
+window.validateDialog = function() {
+  const name = document.getElementById('dialog-name').value.trim();
+  document.getElementById('dialog-create').disabled = !name;
+};
+window.dialogKey = function(e) {
+  if (e.key==='Enter') { const name=document.getElementById('dialog-name').value.trim(); if(name) confirmAddSocket(); }
+  if (e.key==='Escape') closeDialog();
+};
+window.confirmAddSocket = function() {
+  const name = document.getElementById('dialog-name').value.trim();
+  if (!name) return;
+  const mirror = document.getElementById('dialog-mirror').checked;
+  const socket = { id:genId(), name, type:dialogSelectedType, mirror, position:{x:0,y:0,z:0} };
+  sockets.push(socket);
+  selectSocket(socket.id);
+  closeDialog();
+  renderSocketList();
+  toast(`Socket "${name}" created`);
+};
+
+// ─── Export ───────────────────────────────────────────────────────────────────
+window.exportJSON = function() {
+  const data = {
+    version: '1.0',
+    mesh: document.getElementById('mesh-info').textContent.replace('📦 ','') || 'default_ship',
+    exportedAt: new Date().toISOString(),
+    sockets: sockets.map(s => ({
+      id: s.id, name: s.name, type: s.type,
+      position: s.position,
+      mirror: s.mirror,
+      mirroredPosition: s.mirror ? {x:-s.position.x, y:s.position.y, z:s.position.z} : null,
+    })),
+  };
+  const json = JSON.stringify(data, null, 2);
+  const blob = new Blob([json], {type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'socket-config.json';
+  a.click();
+
+  const btn = document.getElementById('export-btn');
+  btn.classList.add('success');
+  btn.textContent = '✓ EXPORTED';
+  setTimeout(()=>{ btn.classList.remove('success'); btn.textContent='↓ EXPORT JSON'; },1400);
+  toast('socket-config.json saved');
+};
+
+// ─── Toast ────────────────────────────────────────────────────────────────────
+let toastTimer;
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('visible');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(()=>el.classList.remove('visible'), 2000);
+}
+
+// ─── Keyboard shortcuts ────────────────────────────────────────────────────────
+window.addEventListener('keydown', e => {
+  if (e.target.tagName==='INPUT') return;
+  if (e.key==='g'||e.key==='G') setMode('translate');
+  if (e.key==='r'||e.key==='R') setMode('rotate');
+  if (e.key==='s'||e.key==='S') setMode('scale');
+  if (e.key==='Escape') { selectedId=null; renderSocketList(); updateInspector(); }
+  if (e.key==='Delete'&&selectedId) window.deleteSocket(selectedId);
+  if (e.key==='n'||e.key==='N') openDialog();
+});
+
+// ─── Seed sockets for demo ────────────────────────────────────────────────────
+function seedDemoSockets() {
+  const demo = [
+    { name:'left_cannon',    type:'weapon',   mirror:true,  position:{x:-0.88, y:-0.3,  z: 0.35} },
+    { name:'main_exhaust',   type:'engine',   mirror:false, position:{x: 0,    y:-1.3,  z: 0   } },
+    { name:'shield_emitter', type:'shield',   mirror:false, position:{x: 0,    y: 0.5,  z: 0   } },
+    { name:'port_thruster',  type:'thruster', mirror:true,  position:{x:-0.6,  y:-0.2,  z:-0.3 } },
+  ];
+  demo.forEach(d => {
+    sockets.push({ id:genId(), ...d });
+  });
+  renderSocketList();
+}
+seedDemoSockets();
+
+</script>
+</body>
+</html>
