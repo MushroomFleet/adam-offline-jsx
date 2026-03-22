@@ -1,0 +1,784 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>WarpEffectTunnel — Demo</title>
+
+<!-- Three.js r165 (CDN) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<!-- React 18 + Babel for in-browser JSX -->
+<script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin:0; padding:0; }
+
+  :root {
+    --bg:    #00000a;
+    --panel: #080c18;
+    --border:#1a2a4a;
+    --accent: #00d4ff;
+    --dim:   #3a5070;
+    --text:  #c8dff5;
+    --font-ui: 'Courier New', monospace;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-ui);
+    height: 100vh;
+    overflow: hidden;
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    grid-template-columns: 260px 1fr;
+    grid-template-areas:
+      "header header"
+      "sidebar viewport"
+      "footer footer";
+  }
+
+  /* ── HEADER ── */
+  header {
+    grid-area: header;
+    border-bottom: 1px solid var(--border);
+    padding: 10px 24px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    background: var(--panel);
+  }
+  .logo {
+    font-size: 11px;
+    letter-spacing: 5px;
+    color: var(--accent);
+    text-transform: uppercase;
+  }
+  .logo span { color: var(--dim); }
+  .breadcrumb { font-size: 10px; letter-spacing: 3px; color: var(--dim); margin-left:auto; }
+  .status-dot {
+    width:6px; height:6px; border-radius:50%;
+    background: var(--accent);
+    box-shadow: 0 0 8px var(--accent);
+    animation: pulse 1.8s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%,100%{ opacity:1; } 50%{ opacity:0.3; }
+  }
+
+  /* ── SIDEBAR ── */
+  aside {
+    grid-area: sidebar;
+    border-right: 1px solid var(--border);
+    background: var(--panel);
+    padding: 20px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    overflow-y: auto;
+  }
+  .panel-section { display:flex; flex-direction:column; gap:10px; }
+  .section-label {
+    font-size: 9px;
+    letter-spacing: 4px;
+    color: var(--dim);
+    text-transform: uppercase;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  /* destination cards */
+  .dest-card {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 12px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    cursor: pointer;
+    transition: all 0.2s;
+    background: transparent;
+    color: var(--text);
+    font-family: var(--font-ui);
+    font-size: 11px;
+    letter-spacing: 2px;
+    text-align: left;
+  }
+  .dest-card:hover { border-color: var(--accent); color: var(--accent); background: #001122; }
+  .dest-card.active { border-color: var(--accent); background: #00111f; }
+  .dest-card.warping { opacity: 0.4; cursor: not-allowed; }
+  .dest-icon { font-size: 16px; }
+  .dest-info { display:flex; flex-direction:column; gap:1px; }
+  .dest-name { font-size:11px; }
+  .dest-class { font-size:9px; color:var(--dim); letter-spacing:3px; }
+
+  /* color swatches */
+  .swatch-row { display:flex; gap:8px; flex-wrap:wrap; }
+  .swatch {
+    width:28px; height:28px; border-radius:50%;
+    border: 2px solid transparent;
+    cursor:pointer;
+    transition: transform 0.15s;
+  }
+  .swatch:hover { transform:scale(1.15); }
+  .swatch.selected { border-color:#ffffff; }
+
+  /* speed slider */
+  .slider-row { display:flex; flex-direction:column; gap:6px; }
+  .slider-label { display:flex; justify-content:space-between; font-size:9px; letter-spacing:2px; color:var(--dim); }
+  input[type=range] {
+    -webkit-appearance:none; width:100%; height:3px;
+    background: var(--border); border-radius:2px; outline:none;
+  }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance:none; width:14px; height:14px; border-radius:50%;
+    background:var(--accent); cursor:pointer;
+    box-shadow:0 0 8px var(--accent);
+  }
+
+  /* warp button */
+  .warp-btn {
+    padding: 13px;
+    border: 1px solid var(--accent);
+    background: transparent;
+    color: var(--accent);
+    font-family: var(--font-ui);
+    font-size: 11px;
+    letter-spacing: 5px;
+    text-transform: uppercase;
+    cursor: pointer;
+    border-radius: 2px;
+    transition: all 0.2s;
+    position: relative;
+    overflow: hidden;
+  }
+  .warp-btn::before {
+    content:'';
+    position:absolute; inset:0;
+    background: var(--accent);
+    opacity:0;
+    transition: opacity 0.2s;
+  }
+  .warp-btn:hover::before { opacity:0.1; }
+  .warp-btn:active::before { opacity:0.2; }
+  .warp-btn:disabled {
+    opacity:0.35;
+    cursor:not-allowed;
+    border-color:var(--dim);
+    color:var(--dim);
+  }
+  .warp-btn.engaged {
+    border-color:#ff4466;
+    color:#ff4466;
+    animation: blink 0.6s ease infinite;
+  }
+  @keyframes blink { 0%,100%{opacity:1;} 50%{opacity:0.6;} }
+
+  /* ── MAIN VIEWPORT ── */
+  main {
+    grid-area: viewport;
+    position: relative;
+    background: #00000a;
+  }
+  #warp-mount {
+    width:100%; height:100%;
+  }
+
+  /* scan-line overlay */
+  main::after {
+    content:'';
+    position:absolute; inset:0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent, transparent 2px,
+      rgba(0,212,255,0.015) 2px, rgba(0,212,255,0.015) 4px
+    );
+    pointer-events:none;
+    z-index:10;
+  }
+
+  /* corner brackets */
+  .corner { position:absolute; width:20px; height:20px; z-index:20; }
+  .corner.tl { top:12px; left:12px; border-top:1px solid var(--accent); border-left:1px solid var(--accent); }
+  .corner.tr { top:12px; right:12px; border-top:1px solid var(--accent); border-right:1px solid var(--accent); }
+  .corner.bl { bottom:12px; left:12px; border-bottom:1px solid var(--accent); border-left:1px solid var(--accent); }
+  .corner.br { bottom:12px; right:12px; border-bottom:1px solid var(--accent); border-right:1px solid var(--accent); }
+
+  /* ── FOOTER ── */
+  footer {
+    grid-area: footer;
+    border-top: 1px solid var(--border);
+    background: var(--panel);
+    padding: 7px 24px;
+    display: flex;
+    align-items: center;
+    gap: 24px;
+    font-size: 9px;
+    letter-spacing: 3px;
+    color: var(--dim);
+  }
+  footer span { color: var(--accent); }
+
+  /* fadeInUp for arrival banner */
+  @keyframes fadeInUp {
+    from { opacity:0; transform:translate(-50%,-40%); }
+    to   { opacity:1; transform:translate(-50%,-50%); }
+  }
+
+  /* scrollbar */
+  aside::-webkit-scrollbar { width:3px; }
+  aside::-webkit-scrollbar-track { background:transparent; }
+  aside::-webkit-scrollbar-thumb { background:var(--border); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="status-dot"></div>
+  <div class="logo">WARP<span>GATE</span> / <span>SYS</span></div>
+  <div style="font-size:9px;letter-spacing:2px;color:#3a5070">
+    Warp-effect-tunnel.jsx — Demo
+  </div>
+  <div class="breadcrumb">NAVIGATION CONTROL v2.1</div>
+</header>
+
+<aside id="sidebar"><!-- filled by React --></aside>
+
+<main id="main">
+  <div class="corner tl"></div>
+  <div class="corner tr"></div>
+  <div class="corner bl"></div>
+  <div class="corner br"></div>
+  <div id="warp-mount"></div>
+</main>
+
+<footer>
+  <span>THREE.JS</span> r128 &nbsp;|&nbsp;
+  <span>REACT</span> 18 &nbsp;|&nbsp;
+  STATUS: STANDBY &nbsp;|&nbsp;
+  COORDS: 0.000 / 0.000 / 0.000
+</footer>
+
+<script type="text/babel">
+// ─── re-declare THREE from global CDN ────────────────────────
+const {
+  WebGLRenderer, PerspectiveCamera, Scene, Color,
+  AmbientLight, PointLight,
+  BufferGeometry, BufferAttribute, Float32BufferAttribute,
+  Points, PointsMaterial,
+  TorusGeometry, CylinderGeometry, CircleGeometry,
+  OctahedronGeometry, ConeGeometry, SphereGeometry,
+  Mesh, MeshStandardMaterial, MeshBasicMaterial,
+  ShaderMaterial, Group,
+} = THREE;
+
+// ─── lerp / clamp ─────────────────────────────────────────────
+const lerp  = (a,b,t) => a+(b-a)*t;
+const clamp = (v,lo,hi) => Math.max(lo,Math.min(hi,v));
+
+// ─── PHASE ────────────────────────────────────────────────────
+const PHASE = {
+  IDLE:'idle', APPROACH:'approach', ENTER:'enter',
+  TUNNEL:'tunnel', EMERGE:'emerge', ARRIVED:'arrived',
+};
+
+// ─── SHADERS ──────────────────────────────────────────────────
+const gateVert = `
+  varying vec2 vUv; varying vec3 vNormal; uniform float uTime;
+  void main(){
+    vUv=uv; vNormal=normalMatrix*normal;
+    vec3 pos=position*(1.0+sin(uTime*1.4)*0.018);
+    gl_Position=projectionMatrix*modelViewMatrix*vec4(pos,1.0);
+  }`;
+const gateFrag = `
+  varying vec2 vUv; varying vec3 vNormal;
+  uniform float uTime; uniform vec3 uColor; uniform float uPulse;
+  void main(){
+    float fresnel=pow(1.0-abs(dot(vNormal,vec3(0,0,1))),2.5);
+    float wave=(sin(vUv.x*30.0-uTime*4.0)*0.5+0.5)*(sin(vUv.y*6.283)*0.5+0.5);
+    float glow=(fresnel*0.6+wave*0.4)*(1.0+uPulse*1.5);
+    vec3 col=uColor*glow+uColor*0.12;
+    gl_FragColor=vec4(col,clamp(glow+0.15,0.0,1.0));
+  }`;
+const flatVert = `
+  varying vec2 vUv;
+  void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`;
+const portalFrag = `
+  varying vec2 vUv;
+  uniform float uTime; uniform vec3 uColor; uniform float uOpen;
+  float noise(vec2 p){
+    vec2 i=floor(p),f=fract(p); f=f*f*(3.0-2.0*f);
+    float a=fract(sin(dot(i,vec2(127.1,311.7)))*43758.5);
+    float b=fract(sin(dot(i+vec2(1,0),vec2(127.1,311.7)))*43758.5);
+    float c=fract(sin(dot(i+vec2(0,1),vec2(127.1,311.7)))*43758.5);
+    float d=fract(sin(dot(i+vec2(1,1),vec2(127.1,311.7)))*43758.5);
+    return mix(mix(a,b,f.x),mix(c,d,f.x),f.y);
+  }
+  void main(){
+    vec2 uv=vUv*2.0-1.0; float r=length(uv);
+    float a=atan(uv.y,uv.x);
+    float swirl=a+uTime*1.2+r*3.5;
+    float n=noise(vec2(cos(swirl)*r*4.0,sin(swirl)*r*4.0+uTime))*0.5
+           +noise(vec2(cos(swirl*0.5)*r*7.0,sin(swirl*0.5)*r*7.0-uTime*0.7))*0.5;
+    float mask=smoothstep(1.0,0.7,r)*uOpen;
+    vec3 col=mix(uColor*0.3,uColor,n)*mask+vec3(1.0)*pow(1.0-r,5.0)*mask*0.8;
+    gl_FragColor=vec4(col,mask*(0.6+n*0.4));
+  }`;
+const tunnelVert = flatVert;
+const tunnelFrag = `
+  varying vec2 vUv;
+  uniform float uTime,uSpeed,uWhiteout; uniform vec3 uColor;
+  float hash(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
+  void main(){
+    vec2 uv=vUv*2.0-1.0; float r=length(uv);
+    float a=atan(uv.y,uv.x);
+    float depth=vUv.y-uTime*uSpeed*0.55;
+    float sector=floor(a*18.0/6.28318);
+    float starSeed=hash(vec2(sector,floor(depth*8.0)));
+    float streak=step(0.92,starSeed)*(1.0-fract(depth*8.0));
+    streak*=smoothstep(0.95,1.0,r)*smoothstep(1.0,0.6,r);
+    float wall=smoothstep(0.55,1.0,r);
+    vec3 wallCol=uColor*wall*0.35;
+    float core=exp(-r*r*3.5)*0.7;
+    vec3 col=wallCol+uColor*streak+uColor*core;
+    col=mix(col,vec3(1.0),uWhiteout);
+    float alpha=clamp(wall*0.9+streak+core*0.5,0.0,1.0);
+    alpha=mix(alpha,1.0,uWhiteout);
+    gl_FragColor=vec4(col,alpha);
+  }`;
+
+// ─── diamond ship ─────────────────────────────────────────────
+function buildDiamondShip(){
+  const g = new Group();
+  const mat = new MeshStandardMaterial({
+    color:0xaaddff, emissive:0x003366,
+    roughness:0.15, metalness:0.9,
+    transparent:true, opacity:0.92,
+  });
+  const body = new OctahedronGeometry(0.18,0);
+  body.scale(0.6,1.8,0.6);
+  g.add(new Mesh(body,mat));
+  const wgeo = new ConeGeometry(0.22,0.12,4);
+  wgeo.rotateZ(Math.PI/2);
+  const wmat = mat.clone(); wmat.opacity=0.7;
+  const wL = new Mesh(wgeo,wmat); wL.position.set(-0.22,-0.05,0);
+  const wR = wL.clone(); wR.position.set(0.22,-0.05,0);
+  g.add(wL,wR);
+  const glowM = new Mesh(new SphereGeometry(0.06,8,8), new MeshBasicMaterial({color:0x00d4ff}));
+  glowM.position.y=-0.34; g.add(glowM);
+  g.rotation.x=Math.PI;
+  return g;
+}
+
+// ─── DESTINATIONS ─────────────────────────────────────────────
+const DESTINATIONS = [
+  { id:'sol',    name:'Sol System',       icon:'☀',  class:'G-TYPE STAR',    color:'#ffcc44' },
+  { id:'kepler', name:'Kepler-442',       icon:'🜂',  class:'K-TYPE STAR',    color:'#ff8833' },
+  { id:'sirius', name:'Sirius Binary',    icon:'✦',  class:'A-TYPE BINARY',  color:'#aaddff' },
+  { id:'nebula', name:'Horsehead Nebula', icon:'⬟',  class:'NEBULA CLUSTER', color:'#cc44ff' },
+  { id:'vega',   name:'Vega Station',     icon:'⬡',  class:'F-TYPE STAR',    color:'#00d4ff' },
+];
+
+// ─── WARP COMPONENT ───────────────────────────────────────────
+function WarpEffectTunnel({ active, destinationName, onArrival, color='#00d4ff', speed=1 }) {
+  const mountRef = React.useRef(null);
+  const sRef     = React.useRef({
+    phase:PHASE.IDLE, t:0,
+    phaseDur:{
+      [PHASE.APPROACH]:2.5,[PHASE.ENTER]:1.6,
+      [PHASE.TUNNEL]:4.2,  [PHASE.EMERGE]:1.8,[PHASE.ARRIVED]:2.0,
+    },
+    animId:null, lastTime:0,
+  });
+  const [phase,    setPhase]    = React.useState(PHASE.IDLE);
+  const [flashOpa, setFlashOpa] = React.useState(0);
+  const [arrived,  setArrived]  = React.useState(false);
+
+  // build scene once
+  React.useEffect(()=>{
+    const el = mountRef.current; if(!el) return;
+    const s  = sRef.current;
+
+    const renderer = new WebGLRenderer({antialias:true,alpha:true});
+    renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+    renderer.setSize(el.clientWidth,el.clientHeight);
+    renderer.setClearColor(0,0);
+    el.appendChild(renderer.domElement);
+
+    const scene  = new Scene();
+    const camera = new PerspectiveCamera(75,el.clientWidth/el.clientHeight,0.01,1000);
+    camera.position.set(0,0,4);
+
+    scene.add(new AmbientLight(0x112233,3));
+    const pt = new PointLight(new Color(color),80,12);
+    pt.position.set(0,0,2); scene.add(pt);
+
+    // stars
+    const sg = new BufferGeometry();
+    const sp = new Float32Array(3000*3);
+    for(let i=0;i<3000;i++){
+      sp[i*3]=(Math.random()-.5)*200;
+      sp[i*3+1]=(Math.random()-.5)*200;
+      sp[i*3+2]=(Math.random()-.5)*200;
+    }
+    sg.setAttribute('position',new BufferAttribute(sp,3));
+    scene.add(new Points(sg,new PointsMaterial({color:0xffffff,size:.18,sizeAttenuation:true})));
+
+    // gate
+    const gate    = new Group(); scene.add(gate);
+    const accentC = new Color(color);
+
+    const mkRingUni = (col,sc=1) => ({
+      uTime:{value:0}, uColor:{value:new Color(col).multiplyScalar(sc)}, uPulse:{value:0},
+    });
+    const ringUni  = mkRingUni(color,1);
+    const ring2Uni = mkRingUni(color,0.7);
+
+    const ringMat = new ShaderMaterial({
+      vertexShader:gateVert, fragmentShader:gateFrag,
+      uniforms:ringUni, transparent:true, depthWrite:false, side:THREE.DoubleSide,
+    });
+    const ring  = new Mesh(new TorusGeometry(1.4,.09,20,120),ringMat);
+    const ring2Mat = new ShaderMaterial({
+      vertexShader:gateVert, fragmentShader:gateFrag,
+      uniforms:ring2Uni, transparent:true, depthWrite:false, side:THREE.DoubleSide,
+    });
+    const ring2 = new Mesh(new TorusGeometry(1.25,.035,12,100),ring2Mat);
+    gate.add(ring,ring2);
+
+    const portalUni = { uTime:{value:0}, uColor:{value:accentC.clone()}, uOpen:{value:0} };
+    const portalMesh = new Mesh(
+      new CircleGeometry(1.22,64),
+      new ShaderMaterial({ vertexShader:flatVert, fragmentShader:portalFrag,
+        uniforms:portalUni, transparent:true, depthWrite:false, side:THREE.DoubleSide })
+    );
+    portalMesh.position.z=-.01; gate.add(portalMesh);
+
+    // particles
+    const pGeo=new BufferGeometry();
+    const pPos=new Float32Array(180*3);
+    for(let i=0;i<180;i++){
+      const a=(i/180)*Math.PI*2, r=1.4+(Math.random()-.5)*.12;
+      pPos[i*3]=Math.cos(a)*r; pPos[i*3+1]=Math.sin(a)*r; pPos[i*3+2]=(Math.random()-.5)*.05;
+    }
+    pGeo.setAttribute('position',new BufferAttribute(pPos,3));
+    const particles = new Points(pGeo,new PointsMaterial({
+      color:accentC,size:.045,sizeAttenuation:true,transparent:true,opacity:.9,
+    }));
+    gate.add(particles);
+
+    // tunnel
+    const tunnelUni = { uTime:{value:0}, uSpeed:{value:speed}, uColor:{value:accentC.clone()}, uWhiteout:{value:0} };
+    const tunnelMesh = new Mesh(
+      new CylinderGeometry(2.2,2.2,40,64,1,true),
+      new ShaderMaterial({ vertexShader:tunnelVert, fragmentShader:tunnelFrag,
+        uniforms:tunnelUni, transparent:true, depthWrite:false, side:THREE.BackSide })
+    );
+    tunnelMesh.rotation.x=Math.PI/2;
+    tunnelMesh.position.z=-18;
+    tunnelMesh.visible=false;
+    scene.add(tunnelMesh);
+
+    // ship
+    const ship = buildDiamondShip();
+    ship.position.set(0,0,3.5); ship.visible=false;
+    scene.add(ship);
+
+    const onResize = ()=>{
+      camera.aspect=el.clientWidth/el.clientHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(el.clientWidth,el.clientHeight);
+    };
+    window.addEventListener('resize',onResize);
+
+    Object.assign(s,{
+      scene,camera,renderer,gate,ring,ring2,ringUni,ring2Uni,
+      portal:portalMesh,portalUni,tunnel:tunnelMesh,tunnelUni,
+      particles,ship,pt,
+    });
+    return ()=>{
+      window.removeEventListener('resize',onResize);
+      cancelAnimationFrame(s.animId);
+      renderer.dispose();
+      el.removeChild(renderer.domElement);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[]);
+
+  // sync accent color
+  React.useEffect(()=>{
+    const s = sRef.current;
+    const c = new Color(color);
+    if(s.ringUni)   { s.ringUni.uColor.value.copy(c); }
+    if(s.ring2Uni)  { s.ring2Uni.uColor.value.copy(c.clone().multiplyScalar(0.7)); }
+    if(s.portalUni) { s.portalUni.uColor.value.copy(c); }
+    if(s.tunnelUni) { s.tunnelUni.uColor.value.copy(c); }
+    if(s.pt)        { s.pt.color.copy(c); }
+    if(s.particles) { s.particles.material.color.copy(c); }
+  },[color]);
+
+  // animation loop
+  const tick = React.useCallback((now)=>{
+    const s = sRef.current;
+    s.animId = requestAnimationFrame(tick);
+    const dt = Math.min((now - s.lastTime)/1000, 0.05);
+    s.lastTime = now;
+    const {
+      scene,camera,renderer,
+      gate,ring,ring2,ringUni,ring2Uni,
+      portalUni,tunnel,tunnelUni,
+      particles,ship,pt,
+      phase:ph,phaseDur,
+    } = s;
+    if(!renderer) return;
+
+    const T = performance.now()/1000;
+    if(ringUni){
+      ringUni.uTime.value  = T; ring2Uni.uTime.value = T;
+      portalUni.uTime.value= T; tunnelUni.uTime.value= T;
+    }
+
+    if(ring)  ring.rotation.z  =  T*0.25;
+    if(ring2) ring2.rotation.z = -T*0.38;
+    if(particles) particles.rotation.z = T*0.15;
+
+    if(ph!==PHASE.IDLE && ph!==PHASE.ARRIVED) s.t += dt;
+    const dur  = phaseDur[ph]||1;
+    const prog = clamp(s.t/dur,0,1);
+
+    const adv = (next)=>{ s.phase=next; s.t=0; setPhase(next); };
+
+    switch(ph){
+      case PHASE.APPROACH:
+        camera.position.z = lerp(4,1.8,prog);
+        portalUni.uOpen.value = lerp(0,1,prog);
+        ringUni.uPulse.value  = Math.sin(T*6)*0.3*prog;
+        ring2Uni.uPulse.value = Math.sin(T*8+1)*0.3*prog;
+        pt.intensity = lerp(80,220,prog);
+        if(prog>=1) adv(PHASE.ENTER);
+        break;
+      case PHASE.ENTER:
+        camera.position.z = lerp(1.8,-0.5,prog);
+        camera.fov = lerp(75,120,prog); camera.updateProjectionMatrix();
+        portalUni.uOpen.value = 1;
+        if(ship){ ship.visible=true; ship.position.z=lerp(3.5,1.5,prog); ship.scale.setScalar(lerp(0.01,1,prog)); }
+        if(prog>=1){ gate.visible=false; tunnel.visible=true; adv(PHASE.TUNNEL); }
+        break;
+      case PHASE.TUNNEL:
+        camera.position.z = lerp(-0.5,-32,prog);
+        camera.fov = lerp(120,90,prog); camera.updateProjectionMatrix();
+        tunnelUni.uSpeed.value = speed*(1+prog*2);
+        if(ship){
+          ship.position.z = camera.position.z+lerp(2.5,1.5,prog);
+          ship.rotation.z = Math.sin(T*1.8)*0.12;
+          ship.rotation.x = Math.PI+Math.sin(T*1.1)*0.05;
+        }
+        if(prog>=1) adv(PHASE.EMERGE);
+        break;
+      case PHASE.EMERGE:
+        camera.position.z = lerp(-32,-36,prog);
+        tunnelUni.uWhiteout.value = prog;
+        setFlashOpa(prog);
+        if(prog>=1){ tunnel.visible=false; if(ship) ship.visible=false; adv(PHASE.ARRIVED); }
+        break;
+      case PHASE.ARRIVED:
+        setFlashOpa(1-prog);
+        if(prog>=1){ s.phase=PHASE.IDLE; setPhase(PHASE.IDLE); setArrived(true); onArrival&&onArrival(); }
+        break;
+      default: break;
+    }
+    renderer.render(scene,camera);
+  },[onArrival,speed]);
+
+  React.useEffect(()=>{
+    const s=sRef.current; s.lastTime=performance.now();
+    s.animId=requestAnimationFrame(tick);
+    return ()=>cancelAnimationFrame(s.animId);
+  },[tick]);
+
+  React.useEffect(()=>{
+    if(!active) return;
+    const s=sRef.current;
+    if(s.phase!==PHASE.IDLE) return;
+    if(s.gate)   s.gate.visible=true;
+    if(s.tunnel) s.tunnel.visible=false;
+    if(s.ship)   { s.ship.visible=false; s.ship.scale.setScalar(0.01); }
+    if(s.camera) { s.camera.position.set(0,0,4); s.camera.fov=75; s.camera.updateProjectionMatrix(); }
+    if(s.portalUni) s.portalUni.uOpen.value=0;
+    if(s.tunnelUni) { s.tunnelUni.uWhiteout.value=0; s.tunnelUni.uSpeed.value=speed; }
+    setArrived(false); setFlashOpa(0);
+    s.t=0; s.phase=PHASE.APPROACH; setPhase(PHASE.APPROACH);
+  },[active,speed]);
+
+  const phaseLabel = {
+    [PHASE.IDLE]:'GATE INACTIVE',
+    [PHASE.APPROACH]:'APPROACHING GATE',
+    [PHASE.ENTER]:'INITIATING WARP SEQUENCE',
+    [PHASE.TUNNEL]:'WARP TUNNEL ACTIVE',
+    [PHASE.EMERGE]:'EXITING WARP',
+    [PHASE.ARRIVED]:`ARRIVAL: ${destinationName}`,
+  }[phase]||'';
+
+  return (
+    <div style={{position:'relative',width:'100%',height:'100%',overflow:'hidden',background:'#00000a',fontFamily:"'Courier New',monospace"}}>
+      <div ref={mountRef} style={{position:'absolute',inset:0,width:'100%',height:'100%'}}/>
+
+      {/* whiteout */}
+      <div style={{position:'absolute',inset:0,background:'#fff',opacity:flashOpa,pointerEvents:'none'}}/>
+
+      {/* HUD */}
+      <div style={{position:'absolute',bottom:24,left:'50%',transform:'translateX(-50%)',textAlign:'center',pointerEvents:'none',zIndex:5}}>
+        <div style={{color,fontSize:10,letterSpacing:6,opacity:.5}}>⬡ ⬡ ⬡</div>
+        <div style={{color:'#fff',fontSize:12,letterSpacing:4,textTransform:'uppercase',margin:'5px 0',textShadow:`0 0 14px ${color}`}}>
+          {phaseLabel}
+        </div>
+        {phase===PHASE.TUNNEL && (
+          <div style={{color,fontSize:10,letterSpacing:3}}>
+            WARP ∞ — STAR SYSTEMS TRAVERSED
+          </div>
+        )}
+        <div style={{color,fontSize:10,letterSpacing:6,opacity:.5}}>⬡ ⬡ ⬡</div>
+      </div>
+
+      {/* arrival */}
+      {arrived && (
+        <div style={{
+          position:'absolute',top:'50%',left:'50%',
+          transform:'translate(-50%,-50%)',
+          textAlign:'center',pointerEvents:'none',
+          animation:'fadeInUp 0.8s ease forwards',zIndex:6,
+        }}>
+          <div style={{color,fontSize:11,letterSpacing:8,marginBottom:10}}>— ARRIVED —</div>
+          <div style={{color:'#fff',fontSize:26,letterSpacing:5,fontWeight:300,textShadow:`0 0 30px ${color}`}}>
+            {destinationName}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── DEMO SHELL ───────────────────────────────────────────────
+function Demo(){
+  const [selectedDest, setSelectedDest] = React.useState(DESTINATIONS[4]);
+  const [warpActive,   setWarpActive]   = React.useState(false);
+  const [isWarping,    setIsWarping]    = React.useState(false);
+  const [speed,        setSpeed]        = React.useState(1);
+  const [triggerKey,   setTriggerKey]   = React.useState(0);
+
+  const handleWarp = () => {
+    if(isWarping) return;
+    setIsWarping(true);
+    setWarpActive(true);
+    setTriggerKey(k=>k+1);
+  };
+  const handleArrival = () => {
+    setTimeout(()=>{
+      setWarpActive(false);
+      setIsWarping(false);
+    }, 600);
+  };
+  const handleDestSelect = (d) => {
+    if(isWarping) return;
+    setSelectedDest(d);
+  };
+
+  return (
+    <>
+      {/* sidebar */}
+      {ReactDOM.createPortal(
+        <>
+          <div className="panel-section">
+            <div className="section-label">Destination</div>
+            {DESTINATIONS.map(d=>(
+              <button
+                key={d.id}
+                className={`dest-card${d.id===selectedDest.id?' active':''}${isWarping?' warping':''}`}
+                onClick={()=>handleDestSelect(d)}
+                style={d.id===selectedDest.id?{borderColor:d.color,color:d.color}:{}}
+              >
+                <span className="dest-icon">{d.icon}</span>
+                <span className="dest-info">
+                  <span className="dest-name">{d.name}</span>
+                  <span className="dest-class">{d.class}</span>
+                </span>
+              </button>
+            ))}
+          </div>
+
+          <div className="panel-section">
+            <div className="section-label">Gate Color</div>
+            <div className="swatch-row">
+              {DESTINATIONS.map(d=>(
+                <div
+                  key={d.id}
+                  className={`swatch${d.id===selectedDest.id?' selected':''}`}
+                  style={{background:d.color,boxShadow:d.id===selectedDest.id?`0 0 12px ${d.color}`:''}}
+                  onClick={()=>handleDestSelect(d)}
+                />
+              ))}
+            </div>
+          </div>
+
+          <div className="panel-section">
+            <div className="section-label">Warp Speed</div>
+            <div className="slider-row">
+              <div className="slider-label">
+                <span>FACTOR</span>
+                <span style={{color:'var(--accent)'}}>{speed.toFixed(1)}×</span>
+              </div>
+              <input
+                type="range" min="0.4" max="3" step="0.1"
+                value={speed}
+                onChange={e=>setSpeed(parseFloat(e.target.value))}
+                disabled={isWarping}
+              />
+              <div className="slider-label">
+                <span>SLOW</span><span>MAXIMUM</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="panel-section">
+            <button
+              className={`warp-btn${isWarping?' engaged':''}`}
+              onClick={handleWarp}
+              disabled={isWarping}
+            >
+              {isWarping ? '⬡ WARPING ⬡' : '⬡ ENGAGE WARP ⬡'}
+            </button>
+          </div>
+
+          <div className="panel-section">
+            <div className="section-label">System Info</div>
+            <div style={{fontSize:9,letterSpacing:2,lineHeight:1.9,color:'var(--dim)'}}>
+              TARGET<br/>
+              <span style={{color:selectedDest.color,letterSpacing:3}}>{selectedDest.name}</span><br/><br/>
+              CLASS &nbsp; {selectedDest.class}<br/>
+              SPEED &nbsp; {speed.toFixed(1)}×<br/>
+              STATUS {isWarping?'WARP IN PROGRESS':'STANDBY'}<br/>
+            </div>
+          </div>
+        </>,
+        document.getElementById('sidebar')
+      )}
+
+      {/* main viewport */}
+      <WarpEffectTunnel
+        key={triggerKey}
+        active={warpActive}
+        destinationName={selectedDest.name}
+        onArrival={handleArrival}
+        color={selectedDest.color}
+        speed={speed}
+      />
+    </>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('warp-mount')).render(<Demo/>);
+</script>
+</body>
+</html>
