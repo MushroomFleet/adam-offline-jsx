@@ -1,0 +1,1207 @@
+/**
+ * LowPolyShipDesigner.jsx
+ * 
+ * A standalone React component for designing low-poly spaceships
+ * in the style of Star Fox 64 / Lylat Wars (N64).
+ * 
+ * Features:
+ * - 6 component types (fuselage, wing, engine, cockpit, fin, weapon)
+ * - Vertex color painting with 12-color palette
+ * - Transform controls (position, rotation, scale, stretch XYZ, mirror)
+ * - Import/Export (JSON, OBJ, GLTF)
+ * - Undo support
+ * 
+ * Usage:
+ *   import LowPolyShipDesigner from './LowPolyShipDesigner';
+ *   
+ *   <LowPolyShipDesigner
+ *     initialDesign={savedParts}
+ *     onSave={(parts) => handleSave(parts)}
+ *     onCancel={() => setEditorOpen(false)}
+ *   />
+ * 
+ * Dependencies:
+ * - React 18+
+ * - Three.js r128+
+ */
+
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import * as THREE from 'three';
+
+// ============================================================================
+// CONSTANTS
+// ============================================================================
+
+const PALETTE = [
+  '#FFFFFF', '#CCCCCC', '#888888',
+  '#4488FF', '#2244AA', '#88CCFF',
+  '#FFCC00', '#FF6600', '#FF3366',
+  '#222222', '#1a1a2e', '#2d2d44'
+];
+
+const COMPONENT_TYPES = [
+  { type: 'fuselage', icon: '◆', label: 'Fuselage' },
+  { type: 'wing', icon: '◢', label: 'Wing' },
+  { type: 'engine', icon: '●', label: 'Engine' },
+  { type: 'cockpit', icon: '◠', label: 'Cockpit' },
+  { type: 'fin', icon: '▲', label: 'Fin' },
+  { type: 'weapon', icon: '│', label: 'Weapon' },
+];
+
+const POLYGON_COUNTS = {
+  fuselage: 12, wing: 12, engine: 24,
+  cockpit: 16, fin: 12, weapon: 16
+};
+
+const MAX_PARTS = 20;
+
+// ============================================================================
+// STYLES
+// ============================================================================
+
+const styles = {
+  container: {
+    width: '100%',
+    height: '100%',
+    display: 'flex',
+    flexDirection: 'column',
+    background: 'radial-gradient(ellipse at center, #1a1a2e 0%, #0a0a12 70%)',
+    color: '#e8e8ff',
+    fontFamily: "'Share Tech Mono', 'Courier New', monospace",
+  },
+  header: {
+    padding: '12px 20px',
+    borderBottom: '1px solid #2a2a44',
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    background: 'linear-gradient(180deg, rgba(18,18,31,0.9) 0%, transparent 100%)',
+  },
+  logo: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    background: 'linear-gradient(135deg, #00ffff, #4488ff)',
+    WebkitBackgroundClip: 'text',
+    WebkitTextFillColor: 'transparent',
+    letterSpacing: 2,
+  },
+  stats: {
+    display: 'flex',
+    gap: 20,
+    color: '#7a7a9e',
+    fontSize: 12,
+  },
+  statValue: {
+    color: '#00ffff',
+  },
+  mainLayout: {
+    flex: 1,
+    display: 'flex',
+    overflow: 'hidden',
+  },
+  panel: {
+    background: 'rgba(18, 18, 31, 0.95)',
+    border: '1px solid #2a2a44',
+    borderRadius: 8,
+    padding: 12,
+    margin: 8,
+    backdropFilter: 'blur(10px)',
+  },
+  panelHeader: {
+    fontSize: 10,
+    color: '#7a7a9e',
+    marginBottom: 8,
+    textTransform: 'uppercase',
+    letterSpacing: 2,
+  },
+  viewport: {
+    flex: 1,
+    position: 'relative',
+  },
+  button: {
+    padding: '8px 12px',
+    background: '#1e1e32',
+    border: '1px solid #2a2a44',
+    borderRadius: 4,
+    color: '#e8e8ff',
+    cursor: 'pointer',
+    fontFamily: 'inherit',
+    fontSize: 11,
+    transition: 'all 0.15s ease',
+  },
+  buttonPrimary: {
+    background: 'linear-gradient(135deg, #4488ff, #2255cc)',
+    borderColor: '#4488ff',
+  },
+  buttonSuccess: {
+    background: 'linear-gradient(135deg, #44ff88, #22aa66)',
+    borderColor: '#44ff88',
+  },
+  partItem: {
+    padding: '8px 10px',
+    marginBottom: 4,
+    background: '#1e1e32',
+    border: '1px solid transparent',
+    borderRadius: 4,
+    cursor: 'pointer',
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    fontSize: 11,
+  },
+  partItemSelected: {
+    background: 'rgba(68, 136, 255, 0.2)',
+    border: '1px solid #4488ff',
+    boxShadow: '0 0 10px rgba(68,136,255,0.3)',
+  },
+  componentBtn: {
+    width: '100%',
+    marginBottom: 6,
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    padding: 12,
+  },
+  colorSwatch: {
+    width: 26,
+    height: 26,
+    borderRadius: 4,
+    cursor: 'pointer',
+    border: '2px solid transparent',
+    transition: 'all 0.15s ease',
+  },
+  colorSwatchActive: {
+    border: '2px solid #ffcc00',
+    boxShadow: '0 0 10px #ffcc00',
+  },
+  transformPanel: {
+    padding: '12px 20px',
+    borderTop: '1px solid #2a2a44',
+    display: 'flex',
+    gap: 20,
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    background: 'rgba(18, 18, 31, 0.8)',
+  },
+  transformGroup: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+  },
+  transformLabel: {
+    fontSize: 9,
+    color: '#7a7a9e',
+    letterSpacing: 1,
+    minWidth: 50,
+  },
+  sliderGroup: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 3,
+  },
+  footer: {
+    padding: '12px 20px',
+    borderTop: '1px solid #2a2a44',
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    background: 'rgba(18, 18, 31, 0.9)',
+  },
+  modal: {
+    position: 'fixed',
+    inset: 0,
+    background: 'rgba(0, 0, 0, 0.8)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 1000,
+    backdropFilter: 'blur(4px)',
+  },
+  modalContent: {
+    background: '#12121f',
+    border: '1px solid #2a2a44',
+    borderRadius: 12,
+    padding: 24,
+    minWidth: 420,
+    maxWidth: 500,
+    boxShadow: '0 20px 60px rgba(0, 0, 0, 0.6), 0 0 40px rgba(68, 136, 255, 0.2)',
+  },
+};
+
+// ============================================================================
+// UTILITIES
+// ============================================================================
+
+const generateId = () => Math.random().toString(36).substr(2, 9);
+
+function hexToRgb(hex) {
+  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+  return result ? {
+    r: parseInt(result[1], 16) / 255,
+    g: parseInt(result[2], 16) / 255,
+    b: parseInt(result[3], 16) / 255
+  } : { r: 0.8, g: 0.8, b: 0.8 };
+}
+
+function createGeometry(type) {
+  let geometry;
+  switch (type) {
+    case 'fuselage':
+      geometry = new THREE.ConeGeometry(0.5, 2, 6);
+      geometry.rotateX(Math.PI / 2);
+      break;
+    case 'wing':
+      geometry = new THREE.BoxGeometry(1.8, 0.08, 0.7);
+      break;
+    case 'engine':
+      geometry = new THREE.CylinderGeometry(0.25, 0.18, 0.6, 6);
+      geometry.rotateX(Math.PI / 2);
+      break;
+    case 'cockpit':
+      geometry = new THREE.SphereGeometry(0.35, 6, 4, 0, Math.PI * 2, 0, Math.PI / 2);
+      break;
+    case 'fin':
+      geometry = new THREE.BoxGeometry(0.08, 0.6, 0.4);
+      break;
+    case 'weapon':
+      geometry = new THREE.CylinderGeometry(0.06, 0.06, 1, 4);
+      geometry.rotateX(Math.PI / 2);
+      break;
+    default:
+      geometry = new THREE.BoxGeometry(1, 1, 1);
+  }
+
+  const nonIndexed = geometry.toNonIndexed();
+  const positionCount = nonIndexed.attributes.position.count;
+  const colors = new Float32Array(positionCount * 3);
+  for (let i = 0; i < positionCount * 3; i += 3) {
+    colors[i] = 0.8;
+    colors[i + 1] = 0.8;
+    colors[i + 2] = 0.8;
+  }
+  nonIndexed.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  nonIndexed.computeVertexNormals();
+  return nonIndexed;
+}
+
+// ============================================================================
+// EXPORT FUNCTIONS
+// ============================================================================
+
+function downloadFile(content, filename, mimeType) {
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function exportToJSON(parts, filename = 'spaceship.json') {
+  const data = {
+    version: '1.0',
+    type: 'lowpoly-ship',
+    exportedAt: new Date().toISOString(),
+    components: parts.map(({ id, ...rest }) => rest)
+  };
+  downloadFile(JSON.stringify(data, null, 2), filename, 'application/json');
+}
+
+function exportToOBJ(meshesRef, parts, filename = 'spaceship.obj') {
+  let objContent = '# LowPoly Ship Designer Export\n';
+  objContent += `# Exported: ${new Date().toISOString()}\n\n`;
+
+  let vertexOffset = 1;
+
+  parts.forEach((part) => {
+    const mesh = meshesRef[part.id];
+    if (!mesh) return;
+
+    const meshesToProcess = [{ mesh, name: part.name }];
+    if (part.mirrored && meshesRef[part.id + '_mirror']) {
+      meshesToProcess.push({ mesh: meshesRef[part.id + '_mirror'], name: part.name + '_Mirror' });
+    }
+
+    meshesToProcess.forEach(({ mesh: currentMesh, name }) => {
+      objContent += `o ${name.replace(/\s+/g, '_')}\n`;
+
+      const geometry = currentMesh.geometry;
+      const positions = geometry.attributes.position;
+      const colors = geometry.attributes.color;
+      const normals = geometry.attributes.normal;
+
+      currentMesh.updateMatrixWorld();
+      const matrix = currentMesh.matrixWorld;
+
+      for (let i = 0; i < positions.count; i++) {
+        const vertex = new THREE.Vector3(
+          positions.getX(i), positions.getY(i), positions.getZ(i)
+        ).applyMatrix4(matrix);
+        const r = colors.getX(i), g = colors.getY(i), b = colors.getZ(i);
+        objContent += `v ${vertex.x.toFixed(6)} ${vertex.y.toFixed(6)} ${vertex.z.toFixed(6)} ${r.toFixed(4)} ${g.toFixed(4)} ${b.toFixed(4)}\n`;
+      }
+
+      for (let i = 0; i < normals.count; i++) {
+        const normal = new THREE.Vector3(
+          normals.getX(i), normals.getY(i), normals.getZ(i)
+        ).transformDirection(matrix);
+        objContent += `vn ${normal.x.toFixed(6)} ${normal.y.toFixed(6)} ${normal.z.toFixed(6)}\n`;
+      }
+
+      for (let i = 0; i < positions.count; i += 3) {
+        const v1 = vertexOffset + i, v2 = vertexOffset + i + 1, v3 = vertexOffset + i + 2;
+        objContent += `f ${v1}//${v1} ${v2}//${v2} ${v3}//${v3}\n`;
+      }
+
+      vertexOffset += positions.count;
+      objContent += '\n';
+    });
+  });
+
+  downloadFile(objContent, filename, 'text/plain');
+}
+
+function exportToGLTF(meshesRef, parts, filename = 'spaceship.gltf') {
+  const gltf = {
+    asset: { version: "2.0", generator: "LowPoly Ship Designer" },
+    scene: 0,
+    scenes: [{ nodes: [] }],
+    nodes: [],
+    meshes: [],
+    accessors: [],
+    bufferViews: [],
+    buffers: []
+  };
+
+  const allBufferData = [];
+  let byteOffset = 0, nodeIndex = 0, meshIndex = 0, accessorIndex = 0, bufferViewIndex = 0;
+
+  parts.forEach((part) => {
+    const mesh = meshesRef[part.id];
+    if (!mesh) return;
+
+    const meshesToProcess = [{ mesh, name: part.name }];
+    if (part.mirrored && meshesRef[part.id + '_mirror']) {
+      meshesToProcess.push({ mesh: meshesRef[part.id + '_mirror'], name: part.name + '_Mirror' });
+    }
+
+    meshesToProcess.forEach(({ mesh: currentMesh, name }) => {
+      currentMesh.updateMatrixWorld();
+      const geometry = currentMesh.geometry;
+      const positions = geometry.attributes.position;
+      const colors = geometry.attributes.color;
+      const normals = geometry.attributes.normal;
+
+      const transformedPositions = new Float32Array(positions.count * 3);
+      const transformedNormals = new Float32Array(normals.count * 3);
+
+      let minX = Infinity, minY = Infinity, minZ = Infinity;
+      let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+
+      for (let i = 0; i < positions.count; i++) {
+        const vertex = new THREE.Vector3(positions.getX(i), positions.getY(i), positions.getZ(i));
+        vertex.applyMatrix4(currentMesh.matrixWorld);
+        transformedPositions[i * 3] = vertex.x;
+        transformedPositions[i * 3 + 1] = vertex.y;
+        transformedPositions[i * 3 + 2] = vertex.z;
+
+        minX = Math.min(minX, vertex.x); minY = Math.min(minY, vertex.y); minZ = Math.min(minZ, vertex.z);
+        maxX = Math.max(maxX, vertex.x); maxY = Math.max(maxY, vertex.y); maxZ = Math.max(maxZ, vertex.z);
+
+        const normal = new THREE.Vector3(normals.getX(i), normals.getY(i), normals.getZ(i));
+        normal.transformDirection(currentMesh.matrixWorld);
+        transformedNormals[i * 3] = normal.x;
+        transformedNormals[i * 3 + 1] = normal.y;
+        transformedNormals[i * 3 + 2] = normal.z;
+      }
+
+      // Position
+      allBufferData.push(new Uint8Array(transformedPositions.buffer.slice(0)));
+      gltf.bufferViews.push({ buffer: 0, byteOffset, byteLength: transformedPositions.byteLength, target: 34962 });
+      gltf.accessors.push({ bufferView: bufferViewIndex++, componentType: 5126, count: positions.count, type: "VEC3", min: [minX, minY, minZ], max: [maxX, maxY, maxZ] });
+      const posAccessor = accessorIndex++;
+      byteOffset += transformedPositions.byteLength;
+
+      // Normal
+      allBufferData.push(new Uint8Array(transformedNormals.buffer.slice(0)));
+      gltf.bufferViews.push({ buffer: 0, byteOffset, byteLength: transformedNormals.byteLength, target: 34962 });
+      gltf.accessors.push({ bufferView: bufferViewIndex++, componentType: 5126, count: normals.count, type: "VEC3" });
+      const normAccessor = accessorIndex++;
+      byteOffset += transformedNormals.byteLength;
+
+      // Color
+      allBufferData.push(new Uint8Array(colors.array.buffer.slice(0)));
+      gltf.bufferViews.push({ buffer: 0, byteOffset, byteLength: colors.array.byteLength, target: 34962 });
+      gltf.accessors.push({ bufferView: bufferViewIndex++, componentType: 5126, count: colors.count, type: "VEC3" });
+      const colorAccessor = accessorIndex++;
+      byteOffset += colors.array.byteLength;
+
+      gltf.meshes.push({
+        name,
+        primitives: [{ attributes: { POSITION: posAccessor, NORMAL: normAccessor, COLOR_0: colorAccessor }, mode: 4 }]
+      });
+      gltf.nodes.push({ name, mesh: meshIndex++ });
+      gltf.scenes[0].nodes.push(nodeIndex++);
+    });
+  });
+
+  const totalLength = allBufferData.reduce((sum, arr) => sum + arr.length, 0);
+  const combinedBuffer = new Uint8Array(totalLength);
+  let offset = 0;
+  allBufferData.forEach(arr => { combinedBuffer.set(arr, offset); offset += arr.length; });
+
+  const base64Buffer = btoa(String.fromCharCode.apply(null, combinedBuffer));
+  gltf.buffers.push({ uri: "data:application/octet-stream;base64," + base64Buffer, byteLength: totalLength });
+
+  downloadFile(JSON.stringify(gltf, null, 2), filename, 'model/gltf+json');
+}
+
+function importFromJSON(jsonString) {
+  const data = JSON.parse(jsonString);
+  if (data.type !== 'lowpoly-ship' || !Array.isArray(data.components)) {
+    throw new Error('Invalid file format');
+  }
+  return data.components.map(comp => ({
+    id: generateId(),
+    type: comp.type || 'fuselage',
+    name: comp.name || 'Part',
+    position: comp.position || [0, 0, 0],
+    rotation: comp.rotation || [0, 0, 0],
+    scale: comp.scale ?? 1,
+    scaleXYZ: comp.scaleXYZ || [1, 1, 1],
+    mirrored: comp.mirrored || false,
+    visible: comp.visible !== false,
+    vertexColors: comp.vertexColors || null
+  }));
+}
+
+// ============================================================================
+// CUSTOM HOOK: useShipDesigner
+// ============================================================================
+
+function useShipDesigner(initialParts = []) {
+  const [parts, setParts] = useState(initialParts);
+  const [selectedId, setSelectedId] = useState(null);
+  const [activeColor, setActiveColor] = useState('#4488FF');
+  const [history, setHistory] = useState([]);
+  const [historyIndex, setHistoryIndex] = useState(-1);
+  const meshesRef = useRef({});
+
+  const selectedPart = useMemo(() => parts.find(p => p.id === selectedId), [parts, selectedId]);
+
+  const polygonCount = useMemo(() => {
+    return parts.reduce((acc, part) => {
+      const base = POLYGON_COUNTS[part.type] || 12;
+      return acc + base * (part.mirrored ? 2 : 1);
+    }, 0);
+  }, [parts]);
+
+  const addPart = useCallback((type) => {
+    if (parts.length >= MAX_PARTS) return null;
+    const newPart = {
+      id: generateId(),
+      type,
+      name: `${type.charAt(0).toUpperCase() + type.slice(1)} ${parts.filter(p => p.type === type).length + 1}`,
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: 1,
+      scaleXYZ: [1, 1, 1],
+      mirrored: false,
+      visible: true,
+      vertexColors: null
+    };
+    setParts(prev => [...prev, newPart]);
+    setSelectedId(newPart.id);
+    setHistory(prev => [...prev.slice(0, historyIndex + 1), { type: 'add', part: newPart }]);
+    setHistoryIndex(prev => prev + 1);
+    return newPart;
+  }, [parts, historyIndex]);
+
+  const updatePart = useCallback((id, updates) => {
+    setParts(prev => prev.map(p => p.id === id ? { ...p, ...updates } : p));
+  }, []);
+
+  const deletePart = useCallback((id) => {
+    const part = parts.find(p => p.id === id);
+    if (!part) return;
+    setParts(prev => prev.filter(p => p.id !== id));
+    if (selectedId === id) setSelectedId(null);
+    setHistory(prev => [...prev.slice(0, historyIndex + 1), { type: 'delete', part }]);
+    setHistoryIndex(prev => prev + 1);
+  }, [parts, selectedId, historyIndex]);
+
+  const undo = useCallback(() => {
+    if (historyIndex < 0) return;
+    const action = history[historyIndex];
+    if (action.type === 'add') {
+      setParts(prev => prev.filter(p => p.id !== action.part.id));
+    } else if (action.type === 'delete') {
+      setParts(prev => [...prev, action.part]);
+    }
+    setHistoryIndex(prev => prev - 1);
+  }, [history, historyIndex]);
+
+  const clearAll = useCallback(() => {
+    setParts([]);
+    setSelectedId(null);
+    setHistory([]);
+    setHistoryIndex(-1);
+    Object.values(meshesRef.current).forEach(mesh => {
+      if (mesh.geometry) mesh.geometry.dispose();
+      if (mesh.material) mesh.material.dispose();
+    });
+    meshesRef.current = {};
+  }, []);
+
+  const loadParts = useCallback((newParts) => {
+    Object.values(meshesRef.current).forEach(mesh => {
+      if (mesh.geometry) mesh.geometry.dispose();
+      if (mesh.material) mesh.material.dispose();
+    });
+    meshesRef.current = {};
+    setParts(newParts);
+    setSelectedId(null);
+    setHistory([]);
+    setHistoryIndex(-1);
+  }, []);
+
+  return {
+    parts, selectedId, selectedPart, activeColor, polygonCount,
+    canUndo: historyIndex >= 0, meshesRef,
+    addPart, updatePart, deletePart, setSelectedId, setActiveColor,
+    undo, clearAll, loadParts
+  };
+}
+
+// ============================================================================
+// SCENE COMPONENT
+// ============================================================================
+
+function Scene({ parts, selectedId, onSelect, activeColor, onColorApplied, meshesRef }) {
+  const mountRef = useRef();
+  const sceneRef = useRef();
+  const cameraRef = useRef();
+  const rendererRef = useRef();
+  const raycasterRef = useRef(new THREE.Raycaster());
+  const mouseRef = useRef(new THREE.Vector2());
+
+  useEffect(() => {
+    const mount = mountRef.current;
+    const width = mount.clientWidth;
+    const height = mount.clientHeight;
+
+    const scene = new THREE.Scene();
+    sceneRef.current = scene;
+
+    const camera = new THREE.PerspectiveCamera(50, width / height, 0.1, 1000);
+    camera.position.set(4, 3, 4);
+    camera.lookAt(0, 0, 0);
+    cameraRef.current = camera;
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setSize(width, height);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setClearColor(0x000000, 0);
+    mount.appendChild(renderer.domElement);
+    rendererRef.current = renderer;
+
+    scene.add(new THREE.AmbientLight(0x404060, 0.6));
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.9);
+    dirLight.position.set(5, 10, 5);
+    scene.add(dirLight);
+    const backLight = new THREE.DirectionalLight(0x4488ff, 0.3);
+    backLight.position.set(-5, -5, -5);
+    scene.add(backLight);
+
+    const grid = new THREE.GridHelper(10, 20, 0x2a2a44, 0x1a1a2e);
+    grid.position.y = -1;
+    scene.add(grid);
+
+    // Orbit controls
+    let isDragging = false;
+    let prevMouse = { x: 0, y: 0 };
+    let spherical = { radius: 6, theta: Math.PI / 4, phi: Math.PI / 3 };
+
+    const updateCamera = () => {
+      camera.position.x = spherical.radius * Math.sin(spherical.phi) * Math.cos(spherical.theta);
+      camera.position.y = spherical.radius * Math.cos(spherical.phi);
+      camera.position.z = spherical.radius * Math.sin(spherical.phi) * Math.sin(spherical.theta);
+      camera.lookAt(0, 0, 0);
+    };
+    updateCamera();
+
+    const onMouseDown = (e) => { isDragging = true; prevMouse = { x: e.clientX, y: e.clientY }; };
+    const onMouseMove = (e) => {
+      if (!isDragging) return;
+      spherical.theta -= (e.clientX - prevMouse.x) * 0.01;
+      spherical.phi = Math.max(0.1, Math.min(Math.PI - 0.1, spherical.phi + (e.clientY - prevMouse.y) * 0.01));
+      updateCamera();
+      prevMouse = { x: e.clientX, y: e.clientY };
+    };
+    const onMouseUp = () => { isDragging = false; };
+    const onWheel = (e) => {
+      spherical.radius = Math.max(2, Math.min(15, spherical.radius + e.deltaY * 0.01));
+      updateCamera();
+    };
+
+    mount.addEventListener('mousedown', onMouseDown);
+    mount.addEventListener('mousemove', onMouseMove);
+    mount.addEventListener('mouseup', onMouseUp);
+    mount.addEventListener('wheel', onWheel);
+    mount.addEventListener('contextmenu', e => e.preventDefault());
+
+    const animate = () => {
+      requestAnimationFrame(animate);
+      renderer.render(scene, camera);
+    };
+    animate();
+
+    const onResize = () => {
+      const w = mount.clientWidth, h = mount.clientHeight;
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+      renderer.setSize(w, h);
+    };
+    window.addEventListener('resize', onResize);
+
+    return () => {
+      window.removeEventListener('resize', onResize);
+      mount.removeEventListener('mousedown', onMouseDown);
+      mount.removeEventListener('mousemove', onMouseMove);
+      mount.removeEventListener('mouseup', onMouseUp);
+      mount.removeEventListener('wheel', onWheel);
+      mount.removeChild(renderer.domElement);
+      renderer.dispose();
+    };
+  }, []);
+
+  // Update meshes
+  useEffect(() => {
+    const scene = sceneRef.current;
+    if (!scene) return;
+
+    // Remove old meshes
+    Object.keys(meshesRef.current).forEach(id => {
+      const baseId = id.replace('_mirror', '');
+      const part = parts.find(p => p.id === baseId);
+      if (!part || (id.endsWith('_mirror') && !part.mirrored)) {
+        scene.remove(meshesRef.current[id]);
+        if (meshesRef.current[id].geometry) meshesRef.current[id].geometry.dispose();
+        if (meshesRef.current[id].material) meshesRef.current[id].material.dispose();
+        delete meshesRef.current[id];
+      }
+    });
+
+    // Add/update meshes
+    parts.forEach(part => {
+      let mesh = meshesRef.current[part.id];
+      if (!mesh) {
+        const geometry = createGeometry(part.type);
+        const material = new THREE.MeshLambertMaterial({
+          vertexColors: true, flatShading: true, side: THREE.DoubleSide
+        });
+        mesh = new THREE.Mesh(geometry, material);
+        mesh.userData.partId = part.id;
+        scene.add(mesh);
+        meshesRef.current[part.id] = mesh;
+      }
+
+      mesh.position.set(...part.position);
+      mesh.rotation.set(
+        part.rotation[0] * Math.PI / 180,
+        part.rotation[1] * Math.PI / 180,
+        part.rotation[2] * Math.PI / 180
+      );
+      const sxyz = part.scaleXYZ || [1, 1, 1];
+      mesh.scale.set(part.scale * sxyz[0], part.scale * sxyz[1], part.scale * sxyz[2]);
+
+      if (part.vertexColors && mesh.geometry.attributes.color) {
+        const colors = mesh.geometry.attributes.color;
+        for (let i = 0; i < part.vertexColors.length; i++) {
+          colors.array[i] = part.vertexColors[i];
+        }
+        colors.needsUpdate = true;
+      }
+
+      mesh.material.emissive = new THREE.Color(part.id === selectedId ? 0x222244 : 0x000000);
+
+      // Mirror
+      if (part.mirrored) {
+        let mirrorMesh = meshesRef.current[part.id + '_mirror'];
+        if (!mirrorMesh) {
+          const geometry = createGeometry(part.type);
+          const material = new THREE.MeshLambertMaterial({
+            vertexColors: true, flatShading: true, side: THREE.DoubleSide
+          });
+          mirrorMesh = new THREE.Mesh(geometry, material);
+          mirrorMesh.userData.isMirror = true;
+          mirrorMesh.userData.partId = part.id;
+          scene.add(mirrorMesh);
+          meshesRef.current[part.id + '_mirror'] = mirrorMesh;
+        }
+        if (part.vertexColors && mirrorMesh.geometry.attributes.color) {
+          const colors = mirrorMesh.geometry.attributes.color;
+          for (let i = 0; i < part.vertexColors.length; i++) {
+            colors.array[i] = part.vertexColors[i];
+          }
+          colors.needsUpdate = true;
+        }
+        mirrorMesh.position.set(-part.position[0], part.position[1], part.position[2]);
+        mirrorMesh.rotation.set(
+          part.rotation[0] * Math.PI / 180,
+          -part.rotation[1] * Math.PI / 180,
+          part.rotation[2] * Math.PI / 180
+        );
+        mirrorMesh.scale.set(part.scale * sxyz[0], part.scale * sxyz[1], part.scale * sxyz[2]);
+        mirrorMesh.material.emissive = mesh.material.emissive;
+      }
+    });
+  }, [parts, selectedId]);
+
+  // Click handling
+  useEffect(() => {
+    const mount = mountRef.current;
+    const handleClick = (e) => {
+      if (e.button !== 0) return;
+      const rect = mount.getBoundingClientRect();
+      mouseRef.current.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      mouseRef.current.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+      raycasterRef.current.setFromCamera(mouseRef.current, cameraRef.current);
+      const meshes = Object.values(meshesRef.current).filter(m => !m.userData.isMirror);
+      const intersects = raycasterRef.current.intersectObjects(meshes);
+      if (intersects.length > 0) {
+        const hit = intersects[0];
+        const partId = hit.object.userData.partId;
+        if (partId !== selectedId) {
+          onSelect(partId);
+        } else if (activeColor && hit.faceIndex !== undefined) {
+          const colors = hit.object.geometry.attributes.color;
+          const rgb = hexToRgb(activeColor);
+          const startVertex = hit.faceIndex * 3;
+          for (let i = 0; i < 3; i++) {
+            colors.setXYZ(startVertex + i, rgb.r, rgb.g, rgb.b);
+          }
+          colors.needsUpdate = true;
+          onColorApplied(partId, Array.from(colors.array));
+        }
+      } else {
+        onSelect(null);
+      }
+    };
+    mount.addEventListener('click', handleClick);
+    return () => mount.removeEventListener('click', handleClick);
+  }, [selectedId, activeColor, onSelect, onColorApplied]);
+
+  return <div ref={mountRef} style={{ width: '100%', height: '100%' }} />;
+}
+
+// ============================================================================
+// EXPORT/IMPORT MODAL
+// ============================================================================
+
+function ExportImportModal({ isOpen, onClose, onExport, onImport, partsCount }) {
+  const fileInputRef = useRef(null);
+  const [dragOver, setDragOver] = useState(false);
+
+  if (!isOpen) return null;
+
+  const handleFileSelect = (e) => {
+    const file = e.target.files?.[0];
+    if (file) processFile(file);
+  };
+
+  const processFile = (file) => {
+    if (!file.name.endsWith('.json')) {
+      alert('Please select a .json file');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        onImport(event.target.result);
+        onClose();
+      } catch (err) {
+        alert('Failed to import: ' + err.message);
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    setDragOver(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) processFile(file);
+  };
+
+  return (
+    <div style={styles.modal} onClick={onClose}>
+      <div style={styles.modalContent} onClick={e => e.stopPropagation()}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 20 }}>
+          <span style={{ fontSize: 14, fontWeight: 'bold', color: '#00ffff', letterSpacing: 2 }}>
+            📁 IMPORT / EXPORT
+          </span>
+          <button onClick={onClose} style={{ ...styles.button, padding: '4px 8px' }}>×</button>
+        </div>
+
+        {/* Import */}
+        <div style={{ marginBottom: 20 }}>
+          <div style={{ fontSize: 10, color: '#7a7a9e', marginBottom: 10, letterSpacing: 1 }}>IMPORT DESIGN</div>
+          <div
+            style={{
+              border: `2px dashed ${dragOver ? '#00ffff' : '#2a2a44'}`,
+              borderRadius: 8,
+              padding: 24,
+              textAlign: 'center',
+              cursor: 'pointer',
+              background: dragOver ? 'rgba(0,255,255,0.05)' : 'transparent',
+            }}
+            onClick={() => fileInputRef.current?.click()}
+            onDrop={handleDrop}
+            onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+            onDragLeave={() => setDragOver(false)}
+          >
+            <div style={{ fontSize: 28, marginBottom: 8 }}>📂</div>
+            <div style={{ fontSize: 11, color: '#7a7a9e' }}>Click or drag & drop</div>
+            <div style={{ fontSize: 9, color: '#4a4a6e' }}>.json files</div>
+          </div>
+          <input ref={fileInputRef} type="file" accept=".json" style={{ display: 'none' }} onChange={handleFileSelect} />
+        </div>
+
+        {/* Export */}
+        <div>
+          <div style={{ fontSize: 10, color: '#7a7a9e', marginBottom: 10, letterSpacing: 1 }}>
+            EXPORT DESIGN ({partsCount} parts)
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
+            {[
+              { format: 'json', icon: '📄', label: '.JSON', desc: 'Re-importable' },
+              { format: 'obj', icon: '🎲', label: '.OBJ', desc: 'Wavefront 3D' },
+              { format: 'gltf', icon: '🌐', label: '.GLTF', desc: 'Web-ready' },
+            ].map(({ format, icon, label, desc }) => (
+              <div
+                key={format}
+                onClick={() => { onExport(format); onClose(); }}
+                style={{
+                  ...styles.panel,
+                  margin: 0,
+                  cursor: partsCount === 0 && format !== 'json' ? 'not-allowed' : 'pointer',
+                  opacity: partsCount === 0 && format !== 'json' ? 0.5 : 1,
+                  textAlign: 'center',
+                }}
+              >
+                <div style={{ fontSize: 24 }}>{icon}</div>
+                <div style={{ fontSize: 11, fontWeight: 'bold', marginTop: 6 }}>{label}</div>
+                <div style={{ fontSize: 9, color: '#4a4a6e' }}>{desc}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// MAIN COMPONENT
+// ============================================================================
+
+export default function LowPolyShipDesigner({
+  initialDesign = null,
+  onSave = null,
+  onCancel = null,
+  onChange = null,
+  title = 'SHIP DESIGNER',
+  showHeader = true,
+  showFooter = true,
+}) {
+  const designer = useShipDesigner(initialDesign || []);
+  const {
+    parts, selectedId, selectedPart, activeColor, polygonCount,
+    canUndo, meshesRef,
+    addPart, updatePart, deletePart, setSelectedId, setActiveColor,
+    undo, clearAll, loadParts
+  } = designer;
+
+  const [modalOpen, setModalOpen] = useState(false);
+
+  // Notify parent of changes
+  useEffect(() => {
+    if (onChange) onChange(parts);
+  }, [parts, onChange]);
+
+  const handleColorApplied = useCallback((partId, colors) => {
+    updatePart(partId, { vertexColors: colors });
+  }, [updatePart]);
+
+  const handleExport = useCallback((format) => {
+    const timestamp = new Date().toISOString().slice(0, 10);
+    switch (format) {
+      case 'json': exportToJSON(parts, `spaceship_${timestamp}.json`); break;
+      case 'obj': exportToOBJ(meshesRef.current, parts, `spaceship_${timestamp}.obj`); break;
+      case 'gltf': exportToGLTF(meshesRef.current, parts, `spaceship_${timestamp}.gltf`); break;
+    }
+  }, [parts]);
+
+  const handleImport = useCallback((jsonString) => {
+    const newParts = importFromJSON(jsonString);
+    loadParts(newParts);
+  }, [loadParts]);
+
+  const axisColors = ['#ff3366', '#44ff44', '#4488ff'];
+
+  return (
+    <div style={styles.container}>
+      {/* Header */}
+      {showHeader && (
+        <div style={styles.header}>
+          <div style={styles.logo}>{title}</div>
+          <div style={styles.stats}>
+            <span>PARTS <span style={styles.statValue}>{parts.length}/{MAX_PARTS}</span></span>
+            <span>POLYGONS <span style={styles.statValue}>{polygonCount}</span></span>
+          </div>
+        </div>
+      )}
+
+      {/* Main Layout */}
+      <div style={styles.mainLayout}>
+        {/* Left Panel - Parts List */}
+        <div style={{ ...styles.panel, width: 180, overflowY: 'auto' }}>
+          <div style={styles.panelHeader}>Ship Parts</div>
+          {parts.length === 0 ? (
+            <div style={{ color: '#4a4a6e', fontSize: 11, textAlign: 'center', padding: 20 }}>
+              Add components →
+            </div>
+          ) : (
+            parts.map(part => (
+              <div
+                key={part.id}
+                onClick={() => setSelectedId(part.id)}
+                style={{
+                  ...styles.partItem,
+                  ...(selectedId === part.id ? styles.partItemSelected : {})
+                }}
+              >
+                <span>{COMPONENT_TYPES.find(c => c.type === part.type)?.icon} {part.name}</span>
+                <span
+                  onClick={(e) => { e.stopPropagation(); deletePart(part.id); }}
+                  style={{ color: '#ff3366', cursor: 'pointer' }}
+                >×</span>
+              </div>
+            ))
+          )}
+        </div>
+
+        {/* Center - Viewport */}
+        <div style={styles.viewport}>
+          <Scene
+            parts={parts}
+            selectedId={selectedId}
+            onSelect={setSelectedId}
+            activeColor={activeColor}
+            onColorApplied={handleColorApplied}
+            meshesRef={meshesRef}
+          />
+
+          {/* Empty state */}
+          {parts.length === 0 && (
+            <div style={{
+              position: 'absolute', inset: 0,
+              display: 'flex', flexDirection: 'column',
+              alignItems: 'center', justifyContent: 'center',
+              pointerEvents: 'none'
+            }}>
+              <div style={{ fontSize: 48, opacity: 0.2 }}>✦</div>
+              <div style={{ fontSize: 12, color: '#4a4a6e', letterSpacing: 2 }}>
+                ADD COMPONENTS TO BUILD
+              </div>
+            </div>
+          )}
+
+          {/* Color Palette */}
+          <div style={{ ...styles.panel, position: 'absolute', bottom: 20, left: 20, margin: 0 }}>
+            <div style={styles.panelHeader}>Paint Colors</div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 4, marginBottom: 12 }}>
+              {PALETTE.map(color => (
+                <div
+                  key={color}
+                  onClick={() => setActiveColor(color)}
+                  style={{
+                    ...styles.colorSwatch,
+                    background: color,
+                    ...(activeColor === color ? styles.colorSwatchActive : {})
+                  }}
+                />
+              ))}
+            </div>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button style={{ ...styles.button, opacity: canUndo ? 1 : 0.4 }} onClick={undo}>Undo</button>
+              <button style={styles.button} onClick={clearAll}>Clear</button>
+              <button style={{ ...styles.button, ...styles.buttonPrimary }} onClick={() => setModalOpen(true)}>File</button>
+            </div>
+          </div>
+
+          {/* Instructions */}
+          <div style={{ ...styles.panel, position: 'absolute', top: 20, right: 20, margin: 0, fontSize: 10 }}>
+            <div style={{ color: '#00ffff', marginBottom: 6 }}>CONTROLS</div>
+            <div style={{ color: '#7a7a9e' }}>
+              <div>› Drag to orbit</div>
+              <div>› Scroll to zoom</div>
+              <div>› Click to select</div>
+              <div>› Click face to paint</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Right Panel - Components */}
+        <div style={{ ...styles.panel, width: 140 }}>
+          <div style={styles.panelHeader}>Components</div>
+          {COMPONENT_TYPES.map(comp => (
+            <button
+              key={comp.type}
+              onClick={() => addPart(comp.type)}
+              disabled={parts.length >= MAX_PARTS}
+              style={{
+                ...styles.button,
+                ...styles.componentBtn,
+                opacity: parts.length >= MAX_PARTS ? 0.4 : 1
+              }}
+            >
+              <span style={{ fontSize: 22 }}>{comp.icon}</span>
+              <span style={{ fontSize: 9, marginTop: 6 }}>{comp.label}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Transform Panel */}
+      {selectedPart && (
+        <div style={styles.transformPanel}>
+          {/* Position */}
+          <div style={styles.transformGroup}>
+            <span style={styles.transformLabel}>POSITION</span>
+            {['X', 'Y', 'Z'].map((axis, i) => (
+              <div key={axis} style={styles.sliderGroup}>
+                <span style={{ color: axisColors[i], fontSize: 10, width: 10 }}>{axis}</span>
+                <input
+                  type="range" min="-5" max="5" step="0.1"
+                  value={selectedPart.position[i]}
+                  onChange={(e) => {
+                    const newPos = [...selectedPart.position];
+                    newPos[i] = parseFloat(e.target.value);
+                    updatePart(selectedId, { position: newPos });
+                  }}
+                  style={{ width: 55 }}
+                />
+                <span style={{ fontSize: 9, width: 28, color: '#7a7a9e' }}>{selectedPart.position[i].toFixed(1)}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* Rotation */}
+          <div style={styles.transformGroup}>
+            <span style={styles.transformLabel}>ROTATION</span>
+            {['X', 'Y', 'Z'].map((axis, i) => (
+              <div key={axis} style={styles.sliderGroup}>
+                <span style={{ color: axisColors[i], fontSize: 10, width: 10 }}>{axis}</span>
+                <input
+                  type="range" min="0" max="360" step="5"
+                  value={selectedPart.rotation[i]}
+                  onChange={(e) => {
+                    const newRot = [...selectedPart.rotation];
+                    newRot[i] = parseFloat(e.target.value);
+                    updatePart(selectedId, { rotation: newRot });
+                  }}
+                  style={{ width: 55 }}
+                />
+                <span style={{ fontSize: 9, width: 28, color: '#7a7a9e' }}>{selectedPart.rotation[i]}°</span>
+              </div>
+            ))}
+          </div>
+
+          {/* Scale */}
+          <div style={styles.transformGroup}>
+            <span style={styles.transformLabel}>SCALE</span>
+            <span style={{ color: '#00ffff', fontSize: 10 }}>⊕</span>
+            <input
+              type="range" min="0.2" max="3" step="0.1"
+              value={selectedPart.scale}
+              onChange={(e) => updatePart(selectedId, { scale: parseFloat(e.target.value) })}
+              style={{ width: 55 }}
+            />
+            <span style={{ fontSize: 9, width: 28, color: '#7a7a9e' }}>{selectedPart.scale.toFixed(1)}×</span>
+          </div>
+
+          {/* Stretch */}
+          <div style={styles.transformGroup}>
+            <span style={styles.transformLabel}>STRETCH</span>
+            {['X', 'Y', 'Z'].map((axis, i) => (
+              <div key={axis} style={styles.sliderGroup}>
+                <span style={{ color: axisColors[i], fontSize: 10, width: 10 }}>{axis}</span>
+                <input
+                  type="range" min="0.2" max="3" step="0.1"
+                  value={selectedPart.scaleXYZ?.[i] ?? 1}
+                  onChange={(e) => {
+                    const newScaleXYZ = [...(selectedPart.scaleXYZ || [1, 1, 1])];
+                    newScaleXYZ[i] = parseFloat(e.target.value);
+                    updatePart(selectedId, { scaleXYZ: newScaleXYZ });
+                  }}
+                  style={{ width: 45 }}
+                />
+              </div>
+            ))}
+          </div>
+
+          {/* Mirror */}
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={selectedPart.mirrored}
+              onChange={(e) => updatePart(selectedId, { mirrored: e.target.checked })}
+            />
+            <span style={{ fontSize: 9, letterSpacing: 1 }}>MIRROR X</span>
+          </label>
+        </div>
+      )}
+
+      {/* Footer */}
+      {showFooter && (onSave || onCancel) && (
+        <div style={styles.footer}>
+          <div style={{ fontSize: 10, color: '#4a4a6e' }}>
+            {parts.length} parts · {polygonCount} polygons
+          </div>
+          <div style={{ display: 'flex', gap: 12 }}>
+            {onCancel && (
+              <button style={{ ...styles.button, padding: '10px 24px' }} onClick={onCancel}>
+                Cancel
+              </button>
+            )}
+            {onSave && (
+              <button
+                style={{ ...styles.button, ...styles.buttonSuccess, padding: '10px 28px', fontWeight: 'bold' }}
+                onClick={() => onSave(parts)}
+              >
+                ✓ Save
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Modal */}
+      <ExportImportModal
+        isOpen={modalOpen}
+        onClose={() => setModalOpen(false)}
+        onExport={handleExport}
+        onImport={handleImport}
+        partsCount={parts.length}
+      />
+    </div>
+  );
+}
+
+// Also export the hook and utilities for advanced usage
+export { useShipDesigner, createGeometry, exportToJSON, exportToOBJ, exportToGLTF, importFromJSON };

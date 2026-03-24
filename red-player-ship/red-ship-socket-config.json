@@ -1,0 +1,31 @@
+{
+  "version": "1.0",
+  "mesh": "red-ship",
+  "exportedAt": "2026-03-22T19:07:25.630Z",
+  "sockets": [
+    {
+      "id": "dbg1faa",
+      "name": "weapon",
+      "type": "weapon",
+      "position": {
+        "x": 0,
+        "y": -0.31,
+        "z": 1.76
+      },
+      "mirror": false,
+      "mirroredPosition": null
+    },
+    {
+      "id": "zjby1xh",
+      "name": "engine",
+      "type": "engine",
+      "position": {
+        "x": 0,
+        "y": 0,
+        "z": -2.72
+      },
+      "mirror": false,
+      "mirroredPosition": null
+    }
+  ]
+}
