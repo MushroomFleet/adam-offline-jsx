@@ -1,6 +1,6 @@
 # 12 hour AI gamedev Challenge - Eve Offline
 
-> repo contains all base plans and JSX componenent used in the project some of which are listed below.
+> repo contains all base plans and JSX components used in the project, some of which are listed below.
 
 MSI installer in releases to see the result after ~12 hours (realtime)
 
