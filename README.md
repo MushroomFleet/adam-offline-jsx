@@ -1,6 +1,8 @@
-# Adam-3D-Spaceship-Controller
+# 12 hour AI gamedev Challenge - Eve Offline
 
-> An Eve Online–style dead-space pocket spaceship controller built as a self-contained React (JSX) component, with a standalone `demo.html` for zero-build previewing.
+> repo contains all base plans and JSX componenent used in the project some of which are listed below.
+
+MSI installer in releases to see the result after ~12 hours (realtime)
 
 ---
 
